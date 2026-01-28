@@ -6,7 +6,7 @@ import {
   Paper, Tabs, Tab, MenuItem, Select, FormControl, InputLabel, Slider, CardMedia
 } from '@mui/material';
 import { Refresh, Settings, Delete, Add, ChatBubbleOutline, PersonAdd, Share as IosShare, FilterList, Newspaper as NewspaperIcon } from '@mui/icons-material';
-import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer } from 'recharts';
+import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts';
 import axios from 'axios';
 
 interface Article {
@@ -185,18 +185,109 @@ export default function App() {
   };
 
   return (
-    <Box sx={{ flexGrow: 1, bgcolor: '#f0f2f5', minHeight: '100vh' }}>
+    <Box sx={{ flexGrow: 1, bgcolor: '#f0f2f5', minHeight: '100vh', overflowX: 'hidden' }}>
       <AppBar position="static" elevation={0} sx={{ bgcolor: '#fff', color: '#1a1a1a', borderBottom: '1px solid #ddd' }}>
-        <Toolbar>
-          <Typography variant="h6" sx={{ flexGrow: 1, fontWeight: 'bold' }}>🦤 AI News Insider</Typography>
-          <Box sx={{ mr: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
-            <Button size="small" variant="outlined" startIcon={<Add />} onClick={() => setIngestOpen(true)} color="primary">Manual Add</Button>
-            <Button size="small" variant="outlined" startIcon={<FilterList />} onClick={() => setFilterOpen(true)} color={Object.values(filterThresholds).some(v => v > 0) || filterKeywords ? "primary" : "inherit"}>Filter</Button>
-            {status.lastError && <Chip label="Error" color="error" size="small" onClick={() => setErrorOpen(true)} sx={{ cursor: 'pointer' }} />}
-            <Chip icon={<Refresh sx={{ animation: status.isCrawling ? 'spin 2s linear infinite' : 'none' }} />} label={status.isCrawling ? (status.currentTask || 'Working...') : 'Idle'} color={status.isCrawling ? "primary" : "default"} variant="outlined" size="small" />
-            <Button size="small" color={status.isCrawling ? "error" : "primary"} variant="contained" onClick={status.isCrawling ? stopCrawl : triggerCrawl}>{status.isCrawling ? 'Stop' : 'Start Scan'}</Button>
+        <Toolbar sx={{ px: { xs: 1, sm: 2 } }}>
+          <Typography 
+            variant="h6" 
+            sx={{ 
+              flexGrow: 1, 
+              fontWeight: 'bold',
+              fontSize: { xs: '1rem', sm: '1.25rem' },
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap'
+            }}
+          >
+            🦤 AI News Insider
+          </Typography>
+          
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.5, sm: 1, md: 2 } }}>
+            <IconButton 
+              size="small" 
+              onClick={() => setIngestOpen(true)} 
+              color="primary"
+              title="Manual Add"
+              sx={{ display: { xs: 'inline-flex', sm: 'none' } }}
+            >
+              <Add />
+            </IconButton>
+            <Button 
+              size="small" 
+              variant="outlined" 
+              startIcon={<Add />} 
+              onClick={() => setIngestOpen(true)} 
+              color="primary"
+              sx={{ display: { xs: 'none', sm: 'inline-flex' } }}
+            >
+              Manual Add
+            </Button>
+
+            <IconButton 
+              size="small" 
+              onClick={() => setFilterOpen(true)} 
+              color={Object.values(filterThresholds).some(v => v > 0) || filterKeywords ? "primary" : "default"}
+              title="Filter"
+              sx={{ display: { xs: 'inline-flex', sm: 'none' } }}
+            >
+              <FilterList />
+            </IconButton>
+            <Button 
+              size="small" 
+              variant="outlined" 
+              startIcon={<FilterList />} 
+              onClick={() => setFilterOpen(true)} 
+              color={Object.values(filterThresholds).some(v => v > 0) || filterKeywords ? "primary" : "inherit"}
+              sx={{ display: { xs: 'none', sm: 'inline-flex' } }}
+            >
+              Filter
+            </Button>
+
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <Chip 
+                icon={<Refresh sx={{ animation: status.isCrawling ? 'spin 2s linear infinite' : 'none', fontSize: '1rem !important' }} />} 
+                label={status.isCrawling ? (status.currentTask || 'Working...') : 'Idle'} 
+                color={status.isCrawling ? "primary" : "default"} 
+                variant="outlined" 
+                size="small" 
+                sx={{ 
+                  display: { xs: status.isCrawling ? 'flex' : 'none', md: 'flex' },
+                  maxWidth: { xs: 80, sm: 'none' },
+                  '& .MuiChip-label': {
+                    display: { xs: status.isCrawling ? 'block' : 'none', md: 'block' }
+                  }
+                }}
+              />
+            </Box>
+
+            <Button 
+              size="small" 
+              color={status.isCrawling ? "error" : "primary"} 
+              variant="contained" 
+              onClick={status.isCrawling ? stopCrawl : triggerCrawl}
+              sx={{ 
+                minWidth: { xs: 'auto', sm: 80 },
+                px: { xs: 1, sm: 2 }
+              }}
+            >
+              {status.isCrawling ? 'Stop' : (
+                <>
+                  <Box component="span" sx={{ display: { xs: 'none', sm: 'inline' } }}>Start Scan</Box>
+                  <Box component="span" sx={{ display: { xs: 'inline', sm: 'none' } }}>Start</Box>
+                </>
+              )}
+            </Button>
+
+            {status.lastError && (
+              <IconButton size="small" color="error" onClick={() => setErrorOpen(true)} title="Error detail">
+                <Chip label="!" color="error" size="small" sx={{ height: 20, width: 20, '& .MuiChip-label': { px: 0 }, cursor: 'pointer' }} />
+              </IconButton>
+            )}
+
+            <IconButton onClick={() => setSettingsOpen(true)} size="small" title="Settings">
+              <Settings />
+            </IconButton>
           </Box>
-          <IconButton onClick={() => setSettingsOpen(true)}><Settings /></IconButton>
         </Toolbar>
       </AppBar>
 
@@ -246,6 +337,7 @@ export default function App() {
                       <PolarGrid />
                       {/* @ts-ignore */}
                       <PolarAngleAxis dataKey="subject" />
+                      <PolarRadiusAxis angle={30} domain={[0, 5]} />
                       {/* @ts-ignore */}
                       <Radar dataKey="A" stroke="#1976d2" fill="#1976d2" fillOpacity={0.5} />
                     </RadarChart>
