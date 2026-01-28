@@ -4,6 +4,7 @@ import { DAO } from './lib/db';
 import { exec } from 'child_process';
 import path from 'path';
 import axios from 'axios';
+import { fullyProcessAndSaveArticle } from './lib/crawler/article';
 
 const app = express();
 const port = 3005;
@@ -14,6 +15,32 @@ app.use(express.json());
 // Articles
 app.get('/api/articles', (req, res) => {
   res.json(DAO.getArticles(100));
+});
+
+app.post('/api/articles/ingest', async (req, res) => {
+  const { url } = req.body;
+  if (!url) {
+    return res.status(400).json({ message: 'URL is required' });
+  }
+
+  try {
+    // Check if exists
+    const existing = DAO.getArticleByUrl(url);
+    if (existing && existing.average_score !== null) {
+      return res.json({ message: 'Article already exists', id: existing.id });
+    }
+
+    // Process article fully
+    const article = await fullyProcessAndSaveArticle(url);
+    if (!article) {
+      return res.status(500).json({ message: 'Failed to ingest article' });
+    }
+
+    res.json({ message: 'Article ingested', id: article.id, article });
+  } catch (e: any) {
+    console.error('Ingestion failed:', e);
+    res.status(500).json({ message: 'Ingestion failed', error: e.message });
+  }
 });
 
 app.post('/api/articles/:id/share', async (req, res) => {
@@ -44,7 +71,8 @@ app.post('/api/articles/:id/share', async (req, res) => {
         }
       ],
       color: 0x0078d4, // A different color for manual share if desired
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      image: article.image_url ? { url: article.image_url } : undefined
     };
 
     await axios.post(config.discord_webhook_url, {

@@ -86,6 +86,9 @@ export default function App() {
   const [newSourceName, setNewSourceName] = useState('');
   const [editCharId, setEditCharId] = useState<number | null>(null);
   const [charForm, setCharForm] = useState({ name: '', persona: '', avatar: '', role: 'expert' as 'expert' | 'learner' });
+  const [ingestOpen, setIngestOpen] = useState(false);
+  const [ingestUrl, setIngestUrl] = useState('');
+  const [ingesting, setIngesting] = useState(false);
 
   const fetchData = async () => {
     try {
@@ -123,6 +126,24 @@ export default function App() {
   const deleteChar = async (id: number) => { await axios.delete(`/api/characters/${id}`); fetchData(); };
   const addSource = async () => { if (!newSourceUrl) return; await axios.post('/api/sources', { url: newSourceUrl, name: newSourceName }); setNewSourceUrl(''); setNewSourceName(''); fetchData(); };
   const deleteSource = async (id: number) => { await axios.delete(`/api/sources/${id}`); fetchData(); };
+
+  const ingestUrlAction = async () => {
+    if (!ingestUrl) return;
+    setIngesting(true);
+    try {
+      const res = await axios.post('/api/articles/ingest', { url: ingestUrl });
+      setIngestOpen(false);
+      setIngestUrl('');
+      await fetchData();
+      if (res.data.article) {
+        setSelectedArticle(res.data.article);
+      }
+    } catch (e) {
+      alert('Failed to ingest URL');
+    } finally {
+      setIngesting(false);
+    }
+  };
   const shareToDiscord = async (articleId: number) => { setSharing(true); try { await axios.post(`/api/articles/${articleId}/share`); alert('Shared!'); } catch (e) { alert('Failed'); } finally { setSharing(false); } };
   const clearFilters = () => { setFilterKeywords(''); setFilterThresholds({ average: 0, novelty: 0, importance: 0, reliability: 0, context: 0, thinking: 0 }); };
 
@@ -169,6 +190,7 @@ export default function App() {
         <Toolbar>
           <Typography variant="h6" sx={{ flexGrow: 1, fontWeight: 'bold' }}>🦤 AI News Insider</Typography>
           <Box sx={{ mr: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Button size="small" variant="outlined" startIcon={<Add />} onClick={() => setIngestOpen(true)} color="primary">Manual Add</Button>
             <Button size="small" variant="outlined" startIcon={<FilterList />} onClick={() => setFilterOpen(true)} color={Object.values(filterThresholds).some(v => v > 0) || filterKeywords ? "primary" : "inherit"}>Filter</Button>
             {status.lastError && <Chip label="Error" color="error" size="small" onClick={() => setErrorOpen(true)} sx={{ cursor: 'pointer' }} />}
             <Chip icon={<Refresh sx={{ animation: status.isCrawling ? 'spin 2s linear infinite' : 'none' }} />} label={status.isCrawling ? (status.currentTask || 'Working...') : 'Idle'} color={status.isCrawling ? "primary" : "default"} variant="outlined" size="small" />
@@ -284,6 +306,27 @@ export default function App() {
         <DialogActions>
           <Button onClick={clearFilters}>Clear All</Button>
           <Button onClick={() => setFilterOpen(false)} variant="contained">Apply</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={ingestOpen} onClose={() => setIngestOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Manual URL Ingestion</DialogTitle>
+        <DialogContent>
+          <TextField 
+            autoFocus
+            label="Article URL" 
+            fullWidth 
+            sx={{ my: 2 }} 
+            value={ingestUrl} 
+            onChange={e => setIngestUrl(e.target.value)} 
+            placeholder="https://example.com/article"
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setIngestOpen(false)}>Cancel</Button>
+          <Button onClick={ingestUrlAction} variant="contained" disabled={ingesting || !ingestUrl}>
+            {ingesting ? <CircularProgress size={24} /> : 'Ingest'}
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>

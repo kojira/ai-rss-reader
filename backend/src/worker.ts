@@ -3,6 +3,7 @@ import { backfillImages } from './lib/crawler/backfill';
 import { evaluateArticle } from './lib/llm/evaluator';
 import { sendDiscordNotification } from './lib/notifier/discord';
 import { DAO } from './lib/db/index';
+import { fullyProcessAndSaveArticle } from './lib/crawler/article';
 
 async function main() {
   console.log('Starting AI RSS Reader cycle...');
@@ -43,36 +44,7 @@ async function main() {
       articles_processed: processedCount
     });
 
-    const evaluation = await evaluateArticle({
-      url: article.url,
-      title: article.original_title,
-      content: article.content || '',
-      originalUrl: article.url,
-      pubDate: article.created_at
-    });
-
-    if (evaluation) {
-      DAO.saveArticle({
-        url: article.url,
-        translated_title: evaluation.translatedTitle,
-        summary: evaluation.summary,
-        short_summary: evaluation.shortSummary,
-        score_novelty: evaluation.scores.novelty,
-        score_importance: evaluation.scores.importance,
-        score_reliability: evaluation.scores.reliability,
-        score_context_value: evaluation.scores.contextValue,
-        score_thought_provoking: evaluation.scores.thoughtProvoking,
-        average_score: evaluation.averageScore
-      });
-
-      await sendDiscordNotification({
-        url: article.url,
-        title: article.original_title,
-        content: article.content || '',
-        originalUrl: article.url,
-        pubDate: article.created_at
-      }, evaluation);
-    }
+    await fullyProcessAndSaveArticle(article.url);
   }
 
   DAO.updateCrawlerStatus({ 

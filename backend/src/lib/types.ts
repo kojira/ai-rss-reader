@@ -4,6 +4,7 @@ export interface CrawledArticle {
   title: string;
   content: string;
   pubDate: string | undefined;
+  imageUrl?: string;
 }
 
 export interface EvaluationResult {

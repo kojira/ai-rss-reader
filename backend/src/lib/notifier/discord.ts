@@ -25,7 +25,8 @@ export async function sendDiscordNotification(article: CrawledArticle, evaluatio
       }
     ],
     color: 0x00ff00,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    image: article.imageUrl ? { url: article.imageUrl } : undefined
   };
 
   try {
