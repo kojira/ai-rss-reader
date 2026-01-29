@@ -31,6 +31,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS articles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     url TEXT UNIQUE,
+    resolved_url TEXT,
     original_title TEXT,
     translated_title TEXT,
     summary TEXT,
@@ -43,6 +44,7 @@ db.exec(`
     score_reliability REAL,
     score_context_value REAL,
     score_thought_provoking REAL,
+    published_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -90,15 +92,18 @@ db.exec(`
 try {
     const columns = db.prepare("PRAGMA table_info(articles)").all() as any[];
     const required = [
+        'resolved_url',
         'score_novelty', 
         'score_importance', 
         'score_reliability', 
         'score_context_value', 
-        'score_thought_provoking'
+        'score_thought_provoking',
+        'published_at'
     ];
     for (const col of required) {
         if (!columns.some(c => c.name === col)) {
-            db.exec(`ALTER TABLE articles ADD COLUMN ${col} REAL`);
+            const type = (col === 'resolved_url' || col === 'published_at') ? 'TEXT' : 'REAL';
+            db.exec(`ALTER TABLE articles ADD COLUMN ${col} ${type}`);
         }
     }
     const errorColumns = db.prepare("PRAGMA table_info(article_errors)").all() as any[];
@@ -135,6 +140,7 @@ export interface Character {
 export interface Article {
   id: number;
   url: string;
+  resolved_url: string | null;
   original_title: string;
   translated_title: string | null;
   summary: string | null;
@@ -147,6 +153,7 @@ export interface Article {
   score_reliability: number | null;
   score_context_value: number | null;
   score_thought_provoking: number | null;
+  published_at: string | null;
   created_at: string;
 }
 
@@ -199,7 +206,7 @@ export class DAO {
       sql += ' AND average_score >= ?';
       params.push(minScore);
     }
-    sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    sql += ' ORDER BY COALESCE(published_at, created_at) DESC LIMIT ? OFFSET ?';
     params.push(limit, offset);
     return db.prepare(sql).all(...params) as Article[];
   }

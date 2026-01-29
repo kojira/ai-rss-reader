@@ -120,7 +120,10 @@ Topic: ${art.translated_title || art.original_title}
 Content: ${art.summary || (art.content || '').slice(0, 2000)}
 
 Requirements:
-- MANDATORY: MUST be a back-and-forth conversation between Character A and Character B.
+- MANDATORY: The FIRST speaker MUST be "B" (Character B).
+- Character B should start with a relatable question, a reaction to the headline, or an expression of confusion about the topic to engage the listener.
+- Character A should then respond to B's lead.
+- MUST be a consistent back-and-forth conversation between Character B and Character A.
 - Character A acts as the "speaker" value "A".
 - Character B acts as the "speaker" value "B".
 - Length: approximately ${lengthStr}.
@@ -129,8 +132,9 @@ Requirements:
 
 Output Format:
 [
+  {"speaker": "B", "text": "Character B's opening question or reaction..."},
   {"speaker": "A", "text": "Character A's response..."},
-  {"speaker": "B", "text": "Character B's response..."},
+  {"speaker": "B", "text": "Character B's follow-up..."},
   ...
 ]`;
 

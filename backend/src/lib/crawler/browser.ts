@@ -12,15 +12,15 @@ async function getBrowser(): Promise<Browser> {
   return browserInstance;
 }
 
-export async function fetchFinalUrl(url: string, timeoutMs: number = 8000): Promise<string> {
+export async function fetchFinalUrl(url: string, timeoutMs: number = 30000): Promise<string> {
   const browser = await getBrowser();
   const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   });
   const page = await context.newPage();
   try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-    await page.waitForTimeout(2000);
+    await page.goto(url, { waitUntil: 'load', timeout: timeoutMs });
+    await page.waitForTimeout(3000);
     return page.url();
   } catch (e) {
     console.error(`Browser fetch failed for ${url}:`, e);

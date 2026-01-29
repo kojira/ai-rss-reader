@@ -12,6 +12,7 @@ import axios from 'axios';
 interface Article {
   id: number;
   url: string;
+  resolved_url: string | null;
   original_title: string;
   translated_title: string;
   summary: string;
@@ -23,6 +24,7 @@ interface Article {
   score_reliability: number;
   score_context_value: number;
   score_thought_provoking: number;
+  published_at: string | null;
   created_at: string;
 }
 
@@ -441,7 +443,7 @@ export default function App() {
               <Card sx={{ height: '100%', cursor: 'pointer', display: 'flex', flexDirection: 'column', '&:hover': { transform: 'translateY(-4px)', boxShadow: 4 } }} onClick={() => setSelectedArticle(article)}>
                 <ImageWithFallback src={article.image_url} alt={article.original_title} />
                 <CardContent sx={{ flexGrow: 1 }}>
-                  <Box display="flex" justifyContent="space-between" mb={1}><Typography variant="caption" color="text.secondary">{new Date(article.created_at).toLocaleDateString()}</Typography><Chip label={article.average_score?.toFixed(1) || 'N/A'} color="primary" size="small" /></Box>
+                  <Box display="flex" justifyContent="space-between" mb={1}><Typography variant="caption" color="text.secondary">{new Date(article.published_at || article.created_at).toLocaleDateString()}</Typography><Chip label={article.average_score?.toFixed(1) || 'N/A'} color="primary" size="small" /></Box>
                   <Typography variant="h6" sx={{ fontSize: '1.1rem', fontWeight: 'bold', mb: 1 }}>{article.translated_title || article.original_title}</Typography>
                   <Typography variant="body2" color="text.secondary" sx={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{article.short_summary}</Typography>
                 </CardContent>
@@ -473,7 +475,7 @@ export default function App() {
                   <Typography 
                     variant="h6" 
                     component="a" 
-                    href={selectedArticle.url} 
+                    href={selectedArticle.resolved_url || selectedArticle.url} 
                     target="_blank" 
                     rel="noopener noreferrer"
                     sx={{ textDecoration: 'none', color: 'primary.main', '&:hover': { textDecoration: 'underline' }, fontWeight: 'bold' , flexGrow: 1}}

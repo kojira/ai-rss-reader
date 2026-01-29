@@ -16,11 +16,13 @@ function isGoogleNewsUrl(url: string): boolean {
 
 export async function processArticle(url: string) {
   let targetUrl = url;
+  let resolvedUrl: string | null = null;
   
   if (isGoogleNewsUrl(url)) {
     console.log(`Google News URL detected, resolving redirect: ${url}`);
     try {
       targetUrl = await fetchFinalUrl(url);
+      resolvedUrl = targetUrl;
       console.log(`Resolved to: ${targetUrl}`);
     } catch (e: any) {
       console.error(`Failed to resolve Google News URL: ${e.message}`);
@@ -71,11 +73,13 @@ export async function processArticle(url: string) {
         throw new Error(`Could not determine title for PDF: ${targetUrl}`);
       }
 
+      const finalUrl = (response.request?.res?.responseUrl as string) || targetUrl;
       return {
         title: title,
         content: data.text.trim(),
         imageUrl: '',
-        url: (response.request?.res?.responseUrl as string) || targetUrl,
+        url: url, // Keep original
+        resolvedUrl: finalUrl
       };
     }
 
@@ -87,13 +91,15 @@ export async function processArticle(url: string) {
       const dom = new JSDOM(html, { url: targetUrl });
       const title = dom.window.document.querySelector('title')?.textContent || '';
       const description = dom.window.document.querySelector('meta[name="description"]')?.getAttribute('content') || '';
+      const finalUrl = (response.request?.res?.responseUrl as string) || targetUrl;
       
       if (title && description) {
         return {
           title,
           content: `YouTube Video: ${title}\n\nDescription:\n${description}`,
           imageUrl: dom.window.document.querySelector('meta[property="og:image"]')?.getAttribute('content') || '',
-          url: (response.request?.res?.responseUrl as string) || targetUrl,
+          url: url,
+          resolvedUrl: finalUrl
         };
       }
     }
@@ -109,11 +115,13 @@ export async function processArticle(url: string) {
     const imageUrl = dom.window.document.querySelector('meta[property="og:image"]')?.getAttribute('content') ||
                      dom.window.document.querySelector('meta[name="twitter:image"]')?.getAttribute('content');
 
+    const finalUrl = (response.request?.res?.responseUrl as string) || targetUrl;
     return {
       title: article.title,
       content: article.textContent.trim(),
       imageUrl: imageUrl || '',
-      url: (response.request?.res?.responseUrl as string) || targetUrl,
+      url: url,
+      resolvedUrl: finalUrl
     };
   } catch (e: any) {
     console.error(`Error processing article ${targetUrl}:`, e.message);
@@ -131,6 +139,7 @@ export async function fullyProcessAndSaveArticle(url: string) {
     // 2. Save Initial
     DAO.saveArticle({
       url: processed.url,
+      resolved_url: processed.resolvedUrl,
       original_title: processed.title,
       content: processed.content,
       image_url: processed.imageUrl,
@@ -140,7 +149,7 @@ export async function fullyProcessAndSaveArticle(url: string) {
     currentPhase = 'EVAL';
     currentContext = 'Analyzing content with AI';
     const articleObj: CrawledArticle = {
-      url: processed.url,
+      url: processed.resolvedUrl || processed.url,
       title: processed.title,
       content: processed.content,
       originalUrl: url,
@@ -156,6 +165,7 @@ export async function fullyProcessAndSaveArticle(url: string) {
     // 4. Update with Scores
     DAO.saveArticle({
       url: processed.url,
+      resolved_url: processed.resolvedUrl,
       translated_title: evaluation.translatedTitle,
       summary: evaluation.summary,
       short_summary: evaluation.shortSummary,

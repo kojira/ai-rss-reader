@@ -77,6 +77,7 @@ export async function crawlAllFeeds(): Promise<CrawledArticle[]> {
             original_title: processed.title,
             content: processed.content,
             image_url: processed.imageUrl || null,
+            published_at: item.pubDate ? new Date(item.pubDate).toISOString() : null,
           });
           return true;
         } catch (e: any) {
