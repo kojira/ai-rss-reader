@@ -5,7 +5,7 @@ import {
   TextField, List, ListItem, ListItemText, ListItemSecondaryAction, Avatar, CircularProgress,
   Paper, Tabs, Tab, MenuItem, Select, FormControl, InputLabel, Slider, CardMedia
 } from '@mui/material';
-import { Refresh, Settings, Delete, Add, ChatBubbleOutline, PersonAdd, Share as IosShare, FilterList, Newspaper as NewspaperIcon } from '@mui/icons-material';
+import { Refresh, Settings, Delete, Add, ChatBubbleOutline, PersonAdd, Share as IosShare, FilterList, Newspaper as NewspaperIcon, ViewModule, ViewStream } from '@mui/icons-material';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts';
 import axios from 'axios';
 
@@ -106,6 +106,11 @@ export default function App() {
   const [ingesting, setIngesting] = useState(false);
   const [retryingArticle, setRetryingArticle] = useState(false);
   const [retryErrorDetail, setRetryErrorDetail] = useState<string | null>(null);
+
+  const [gridLayout, setGridLayout] = useState<number>(() => {
+    const saved = localStorage.getItem('gridLayout');
+    return saved ? parseInt(saved, 10) : 1;
+  });
 
   const [hasMore, setHasMore] = useState(true);
   const [loadingArticles, setLoadingArticles] = useState(false);
@@ -288,6 +293,12 @@ export default function App() {
   const shareToDiscord = async (articleId: number) => { setSharing(true); try { await axios.post(`/api/articles/${articleId}/share`); alert('Shared!'); } catch (e) { alert('Failed'); } finally { setSharing(false); } };
   const clearFilters = () => { setFilterKeywords(''); setFilterThresholds({ average: 0, novelty: 0, importance: 0, reliability: 0, context: 0, thinking: 0 }); };
 
+  const toggleGridLayout = () => {
+    const newVal = gridLayout === 1 ? 2 : 1;
+    setGridLayout(newVal);
+    localStorage.setItem('gridLayout', newVal.toString());
+  };
+
   const filteredArticles = useMemo(() => {
     return articles.filter(a => {
       // average_score and keyword are already filtered on backend in fetchInitialData
@@ -429,6 +440,15 @@ export default function App() {
               </IconButton>
             )}
 
+            <IconButton 
+              onClick={toggleGridLayout} 
+              size="small" 
+              title={gridLayout === 1 ? "Switch to 2 columns" : "Switch to 1 column"}
+              sx={{ display: { xs: 'inline-flex', sm: 'none' } }}
+            >
+              {gridLayout === 1 ? <ViewModule /> : <ViewStream />}
+            </IconButton>
+
             <IconButton onClick={() => setSettingsOpen(true)} size="small" title="Settings">
               <Settings />
             </IconButton>
@@ -437,20 +457,22 @@ export default function App() {
       </AppBar>
 
       <Container sx={{ mt: 4, pb: 4 }}>
-        <Grid container spacing={3}>
+        <Grid container spacing={gridLayout === 2 ? 1 : 3}>
           {filteredArticles.map((article) => (
-            <Grid item key={article.id} xs={12} md={6} lg={4}>
+            <Grid item key={article.id} xs={gridLayout === 2 ? 6 : 12} md={6} lg={4}>
               <Card sx={{ height: '100%', cursor: 'pointer', display: 'flex', flexDirection: 'column', '&:hover': { transform: 'translateY(-4px)', boxShadow: 4 } }} onClick={() => setSelectedArticle(article)}>
-                <ImageWithFallback src={article.image_url} alt={article.original_title} />
-                <CardContent sx={{ flexGrow: 1 }}>
-                  <Box display="flex" justifyContent="space-between" mb={1}>
-                    <Typography variant="caption" color="text.secondary">
-                      {new Date(article.published_at && article.published_at.trim() !== "" ? article.published_at : article.created_at).toLocaleString()}
+                <ImageWithFallback src={article.image_url} alt={article.original_title} height={gridLayout === 2 ? 100 : 180} />
+                <CardContent sx={{ flexGrow: 1, p: gridLayout === 2 ? 1 : 2, '&:last-child': { pb: gridLayout === 2 ? 1 : 2 } }}>
+                  <Box display="flex" justifyContent="space-between" mb={gridLayout === 2 ? 0.5 : 1}>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: gridLayout === 2 ? '0.65rem' : '0.75rem' }}>
+                      {new Date(article.published_at && article.published_at.trim() !== "" ? article.published_at : article.created_at).toLocaleDateString()}
                     </Typography>
-                    <Chip label={article.average_score?.toFixed(1) || 'N/A'} color="primary" size="small" />
+                    <Chip label={article.average_score?.toFixed(1) || 'N/A'} color="primary" size="small" sx={{ height: gridLayout === 2 ? 18 : 24, '& .MuiChip-label': { px: gridLayout === 2 ? 0.5 : 1, fontSize: gridLayout === 2 ? '0.65rem' : '0.75rem' } }} />
                   </Box>
-                  <Typography variant="h6" sx={{ fontSize: '1.1rem', fontWeight: 'bold', mb: 1 }}>{article.translated_title || article.original_title}</Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{article.short_summary}</Typography>
+                  <Typography variant="h6" sx={{ fontSize: gridLayout === 2 ? '0.85rem' : '1.1rem', fontWeight: 'bold', mb: gridLayout === 2 ? 0.5 : 1, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.2 }}>{article.translated_title || article.original_title}</Typography>
+                  {gridLayout === 1 && (
+                    <Typography variant="body2" color="text.secondary" sx={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{article.short_summary}</Typography>
+                  )}
                 </CardContent>
               </Card>
             </Grid>
