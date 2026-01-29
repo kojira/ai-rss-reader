@@ -332,22 +332,21 @@ export default function App() {
     });
   }, [articles, filterKeywords, filterThresholds]);
 
-  const ImageWithFallback = ({ src, alt, height = 180 }: { src: string | null, alt: string, height?: number }) => {
+  const ImageWithFallback = ({ src, alt, height = '100%' }: { src: string | null, alt: string, height?: number | string }) => {
     const [error, setError] = useState(false);
     if (!src || error) {
       return (
         <Box sx={{ height, width: '100%', bgcolor: '#e0e0e0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9e9e9e' }}>
-          <NewspaperIcon sx={{ fontSize: height > 100 ? 48 : 24 }} />
+          <NewspaperIcon sx={{ fontSize: '2rem' }} />
         </Box>
       );
     }
     return (
       <CardMedia
         component="img"
-        height={height}
         image={src}
         alt={alt}
-        sx={{ objectFit: 'cover' }}
+        sx={{ objectFit: 'cover', height: '100%', width: '100%' }}
         onError={() => setError(true)}
       />
     );
@@ -469,26 +468,70 @@ export default function App() {
         </Toolbar>
       </AppBar>
 
-      <Container sx={{ mt: 4, pb: 4 }}>
-        <Grid container spacing={gridLayout === 2 ? 1 : 3}>
+      <Container maxWidth={false} sx={{ mt: 4, pb: 4, px: { xs: 2, sm: 3, md: 4, lg: 6 } }}>
+        <Grid container spacing={gridLayout === 2 ? 1 : 3} justifyContent="center" sx={{
+          display: 'grid',
+          gridTemplateColumns: gridLayout === 2 
+            ? 'repeat(auto-fill, minmax(160px, 1fr))' 
+            : 'repeat(auto-fill, minmax(280px, 1fr))',
+          gap: gridLayout === 2 ? '8px' : '24px',
+          maxWidth: '2400px',
+          margin: '0 auto'
+        }}>
           {filteredArticles.map((article) => (
-            <Grid item key={article.id} xs={gridLayout === 2 ? 6 : 12} md={6} lg={4}>
-              <Card sx={{ height: '100%', cursor: 'pointer', display: 'flex', flexDirection: 'column', '&:hover': { transform: 'translateY(-4px)', boxShadow: 4 } }} onClick={() => setSelectedArticle(article)}>
-                <ImageWithFallback src={article.image_url} alt={article.original_title} height={gridLayout === 2 ? 100 : 180} />
-                <CardContent sx={{ flexGrow: 1, p: gridLayout === 2 ? 1 : 2, '&:last-child': { pb: gridLayout === 2 ? 1 : 2 } }}>
+            <Box 
+              key={article.id} 
+              sx={{ width: '100%', maxWidth: 360, justifySelf: 'center' }}
+            >
+              <Card sx={{ 
+                height: '100%', 
+                cursor: 'pointer', 
+                display: 'flex', 
+                flexDirection: 'column', 
+                '&:hover': { transform: 'translateY(-4px)', boxShadow: 4 },
+                bgcolor: '#fff',
+                borderRadius: 2,
+                overflow: 'hidden'
+              }} onClick={() => setSelectedArticle(article)}>
+                <Box sx={{ width: '100%', pt: '56.25%', position: 'relative' }}>
+                  <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+                    <ImageWithFallback src={article.image_url} alt={article.original_title} height="100%" />
+                  </Box>
+                </Box>
+                <CardContent sx={{ 
+                  flexGrow: 1, 
+                  p: gridLayout === 2 ? 1 : 1.5, 
+                  '&:last-child': { pb: gridLayout === 2 ? 1 : 1.5 } 
+                }}>
                   <Box display="flex" justifyContent="space-between" mb={gridLayout === 2 ? 0.5 : 1}>
-                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: gridLayout === 2 ? '0.65rem' : '0.75rem' }}>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: gridLayout === 2 ? '0.65rem' : '0.7rem' }}>
                       {new Date(article.published_at && article.published_at.trim() !== "" ? article.published_at : article.created_at).toLocaleDateString()}
                     </Typography>
-                    <Chip label={article.average_score?.toFixed(1) || 'N/A'} color="primary" size="small" sx={{ height: gridLayout === 2 ? 18 : 24, '& .MuiChip-label': { px: gridLayout === 2 ? 0.5 : 1, fontSize: gridLayout === 2 ? '0.65rem' : '0.75rem' } }} />
+                    <Chip label={article.average_score?.toFixed(1) || 'N/A'} color="primary" size="small" sx={{ height: gridLayout === 2 ? 18 : 20, '& .MuiChip-label': { px: gridLayout === 2 ? 0.5 : 1, fontSize: gridLayout === 2 ? '0.65rem' : '0.7rem' } }} />
                   </Box>
-                  <Typography variant="h6" sx={{ fontSize: gridLayout === 2 ? '0.85rem' : '1.1rem', fontWeight: 'bold', mb: gridLayout === 2 ? 0.5 : 1, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.2 }}>{article.translated_title || article.original_title}</Typography>
-                  {gridLayout === 1 && (
-                    <Typography variant="body2" color="text.secondary" sx={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{article.short_summary}</Typography>
+                  <Typography variant="h6" sx={{ 
+                    fontSize: gridLayout === 2 ? '0.85rem' : { xs: '0.9rem', sm: '0.95rem', md: '1rem' }, 
+                    fontWeight: 'bold', 
+                    mb: gridLayout === 2 ? 0.5 : 1, 
+                    display: '-webkit-box', 
+                    WebkitLineClamp: 2, 
+                    WebkitBoxOrient: 'vertical', 
+                    overflow: 'hidden', 
+                    lineHeight: 1.2 
+                  }}>{article.translated_title || article.original_title}</Typography>
+                  {(gridLayout === 1) && (
+                    <Typography variant="body2" color="text.secondary" sx={{ 
+                      display: { xs: '-webkit-box', lg: 'none', xl: '-webkit-box' }, 
+                      WebkitLineClamp: 2, 
+                      WebkitBoxOrient: 'vertical', 
+                      overflow: 'hidden',
+                      fontSize: '0.8rem',
+                      lineHeight: 1.3
+                    }}>{article.short_summary}</Typography>
                   )}
                 </CardContent>
               </Card>
-            </Grid>
+            </Box>
           ))}
         </Grid>
         
