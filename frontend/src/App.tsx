@@ -102,6 +102,8 @@ export default function App() {
   const [ingestOpen, setIngestOpen] = useState(false);
   const [ingestUrl, setIngestUrl] = useState('');
   const [ingesting, setIngesting] = useState(false);
+  const [retryingArticle, setRetryingArticle] = useState(false);
+  const [retryErrorDetail, setRetryErrorDetail] = useState<string | null>(null);
 
   const [hasMore, setHasMore] = useState(true);
   const [loadingArticles, setLoadingArticles] = useState(false);
@@ -230,6 +232,7 @@ export default function App() {
   const ingestUrlAction = async () => {
     if (!ingestUrl) return;
     setIngesting(true);
+    setRetryErrorDetail(null);
     try {
       const res = await axios.post('/api/articles/ingest', { url: ingestUrl });
       setIngestOpen(false);
@@ -238,13 +241,47 @@ export default function App() {
       if (res.data.article) {
         setSelectedArticle(res.data.article);
       }
-    } catch (e) {
-      alert('Failed to ingest URL');
+    } catch (e: any) {
+      console.error(e);
+      const errorMessage = e.response?.data?.error || e.response?.data?.message || e.message || 'Failed to ingest URL';
+      setRetryErrorDetail(errorMessage);
     } finally {
       setIngesting(false);
     }
   };
-  const retryError = async (id: number) => { try { await axios.post(`/api/errors/${id}/retry`); fetchInitialData(); } catch (e) { alert('Failed to retry'); } };
+  const retryError = async (id: number) => { 
+    try { 
+      await axios.post(`/api/errors/${id}/retry`); 
+      fetchInitialData(); 
+    } catch (e: any) { 
+      console.error(e);
+      const errorMessage = e.response?.data?.error || e.response?.data?.message || e.message || 'Failed to retry';
+      setRetryErrorDetail(errorMessage);
+    } 
+  };
+  const retryArticle = async (id: number) => {
+    setRetryingArticle(true);
+    setRetryErrorDetail(null);
+    try {
+      const res = await axios.post(`/api/articles/${id}/retry`);
+      if (res.data.article) {
+        setSelectedArticle(res.data.article);
+        // Refresh the list to show updated content
+        const [artRes, errRes] = await Promise.all([
+          axios.get(`/api/articles?limit=${articles.length}&offset=0&keyword=${filterKeywords}&minScore=${filterThresholds.average}`),
+          axios.get('/api/articles/errors')
+        ]);
+        setArticles(artRes.data);
+        setFailedProcesses(errRes.data);
+      }
+    } catch (e: any) {
+      console.error(e);
+      const errorMessage = e.response?.data?.error || e.response?.data?.message || e.message || 'Failed to retry article';
+      setRetryErrorDetail(errorMessage);
+    } finally {
+      setRetryingArticle(false);
+    }
+  };
   const deleteError = async (id: number) => { try { await axios.delete(`/api/errors/${id}`); fetchInitialData(); } catch (e) { alert('Failed to delete error'); } };
   const shareToDiscord = async (articleId: number) => { setSharing(true); try { await axios.post(`/api/articles/${articleId}/share`); alert('Shared!'); } catch (e) { alert('Failed'); } finally { setSharing(false); } };
   const clearFilters = () => { setFilterKeywords(''); setFilterThresholds({ average: 0, novelty: 0, importance: 0, reliability: 0, context: 0, thinking: 0 }); };
@@ -443,9 +480,14 @@ export default function App() {
                   >
                     {selectedArticle.translated_title || selectedArticle.original_title}
                   </Typography>
-                  <IconButton size="small" color="primary" onClick={(e) => { e.stopPropagation(); shareToDiscord(selectedArticle.id); }} disabled={sharing}>
-                    {sharing ? <CircularProgress size={20} /> : <IosShare />}
-                  </IconButton>
+                  <Box sx={{ display: 'flex', gap: 0.5 }}>
+                    <IconButton size="small" color="primary" onClick={(e) => { e.stopPropagation(); retryArticle(selectedArticle.id); }} disabled={retryingArticle}>
+                      {retryingArticle ? <CircularProgress size={20} /> : <Refresh />}
+                    </IconButton>
+                    <IconButton size="small" color="primary" onClick={(e) => { e.stopPropagation(); shareToDiscord(selectedArticle.id); }} disabled={sharing}>
+                      {sharing ? <CircularProgress size={20} /> : <IosShare />}
+                    </IconButton>
+                  </Box>
                 </Box>
                 <Box sx={{ height: 200, my: 2 }}>
                   {/* @ts-ignore */}
@@ -566,6 +608,20 @@ export default function App() {
         <Box sx={{ p: 2, textAlign: 'right' }}><Button onClick={() => { setSettingsOpen(false); saveConfig(); fetchInitialData(); }} color="primary" variant="contained">Close & Save</Button></Box>
       </Dialog>
       <Dialog open={errorOpen} onClose={() => setErrorOpen(false)} maxWidth="md" fullWidth><DialogTitle>Error</DialogTitle><DialogContent sx={{ bgcolor: '#fff0f0' }}><Typography variant="body2">{status.lastError}</Typography></DialogContent></Dialog>
+      
+      <Dialog open={!!retryErrorDetail} onClose={() => setRetryErrorDetail(null)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Chip label="!" color="error" size="small" /> Retry Failed
+        </DialogTitle>
+        <DialogContent sx={{ bgcolor: '#fff0f0', pt: 2 }}>
+          <Typography variant="body2" sx={{ fontWeight: 'bold' }}>Reason:</Typography>
+          <Typography variant="body2" sx={{ mt: 1, whiteSpace: 'pre-wrap' }}>{retryErrorDetail}</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRetryErrorDetail(null)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
       <Dialog open={filterOpen} onClose={() => setFilterOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>Advanced Filter</DialogTitle>
         <DialogContent>

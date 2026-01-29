@@ -8,10 +8,28 @@ import { DAO } from '../db';
 import { evaluateArticle } from '../llm/evaluator';
 import { sendDiscordNotification } from '../notifier/discord';
 import { CrawledArticle } from '../types';
+import { fetchFinalUrl } from './browser';
+
+function isGoogleNewsUrl(url: string): boolean {
+  return url.includes('news.google.com') || url.includes('news.url.google.com') || url.includes('google.com/url');
+}
 
 export async function processArticle(url: string) {
+  let targetUrl = url;
+  
+  if (isGoogleNewsUrl(url)) {
+    console.log(`Google News URL detected, resolving redirect: ${url}`);
+    try {
+      targetUrl = await fetchFinalUrl(url);
+      console.log(`Resolved to: ${targetUrl}`);
+    } catch (e: any) {
+      console.error(`Failed to resolve Google News URL: ${e.message}`);
+      // Continue with original URL as fallback, though likely to fail
+    }
+  }
+
   try {
-    const response = await axios.get(url, {
+    const response = await axios.get(targetUrl, {
       headers: { 
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
       },
@@ -21,28 +39,28 @@ export async function processArticle(url: string) {
     });
 
     if (response.status === 404) {
-      throw new Error(`Article not found (404): ${url}`);
+      throw new Error(`Article not found (404): ${targetUrl}`);
     }
 
     if (response.status >= 400) {
-      throw new Error(`Failed to fetch article: ${response.status} ${url}`);
+      throw new Error(`Failed to fetch article: ${response.status} ${targetUrl}`);
     }
 
     const contentType = response.headers['content-type'] || '';
-    const isPdf = contentType.includes('application/pdf') || url.toLowerCase().endsWith('.pdf');
+    const isPdf = contentType.includes('application/pdf') || targetUrl.toLowerCase().endsWith('.pdf');
 
     const buffer = Buffer.from(response.data);
 
     if (isPdf) {
       const data = await pdf(buffer);
       if (!data.text || data.text.trim().length === 0) {
-        throw new Error(`PDF contains no extractable text: ${url}`);
+        throw new Error(`PDF contains no extractable text: ${targetUrl}`);
       }
 
       let title = data.info?.Title || '';
       if (!title || title === 'Untitled' || title.trim() === '') {
         try {
-          const parsedUrl = new URL(url);
+          const parsedUrl = new URL(targetUrl);
           title = path.basename(parsedUrl.pathname);
         } catch {
           title = '';
@@ -50,26 +68,42 @@ export async function processArticle(url: string) {
       }
 
       if (!title) {
-        throw new Error(`Could not determine title for PDF: ${url}`);
+        throw new Error(`Could not determine title for PDF: ${targetUrl}`);
       }
 
       return {
         title: title,
         content: data.text.trim(),
         imageUrl: '',
-        url: (response.request?.res?.responseUrl as string) || url,
+        url: (response.request?.res?.responseUrl as string) || targetUrl,
       };
     }
 
     const decoder = new TextDecoder('utf-8');
-    const html = decoder.decode(buffer);
+    let html = decoder.decode(buffer);
 
-    const dom = new JSDOM(html, { url });
+    // YouTube handling (basic meta tag capture if transcripts unavailable)
+    if (targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be')) {
+      const dom = new JSDOM(html, { url: targetUrl });
+      const title = dom.window.document.querySelector('title')?.textContent || '';
+      const description = dom.window.document.querySelector('meta[name="description"]')?.getAttribute('content') || '';
+      
+      if (title && description) {
+        return {
+          title,
+          content: `YouTube Video: ${title}\n\nDescription:\n${description}`,
+          imageUrl: dom.window.document.querySelector('meta[property="og:image"]')?.getAttribute('content') || '',
+          url: (response.request?.res?.responseUrl as string) || targetUrl,
+        };
+      }
+    }
+
+    const dom = new JSDOM(html, { url: targetUrl });
     const reader = new Readability(dom.window.document);
     const article = reader.parse();
 
     if (!article || !article.title || !article.textContent || article.textContent.trim().length < 50) {
-      throw new Error(`Readability failed to extract valid content from ${url}`);
+      throw new Error(`Readability failed to extract valid content from ${targetUrl}`);
     }
 
     const imageUrl = dom.window.document.querySelector('meta[property="og:image"]')?.getAttribute('content') ||
@@ -79,10 +113,10 @@ export async function processArticle(url: string) {
       title: article.title,
       content: article.textContent.trim(),
       imageUrl: imageUrl || '',
-      url: (response.request?.res?.responseUrl as string) || url,
+      url: (response.request?.res?.responseUrl as string) || targetUrl,
     };
   } catch (e: any) {
-    console.error(`Error processing article ${url}:`, e.message);
+    console.error(`Error processing article ${targetUrl}:`, e.message);
     throw e;
   }
 }
@@ -157,6 +191,9 @@ export async function fullyProcessAndSaveArticle(url: string) {
     }
 
     DAO.logError(url, humanMessage, e.stack, '', currentPhase, currentContext);
-    throw e;
+    const error: any = new Error(humanMessage);
+    error.phase = currentPhase;
+    error.originalError = e.message;
+    throw error;
   }
 }

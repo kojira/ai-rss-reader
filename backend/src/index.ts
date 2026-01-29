@@ -237,15 +237,82 @@ app.delete('/api/crawl', (req, res) => {
 app.post('/api/articles/:id/retry', async (req, res) => {
   const art = DAO.getArticleById(parseInt(req.params.id));
   if (!art) return res.status(404).json({ message: 'Not found' });
-  const upd = await fullyProcessAndSaveArticle(art.url);
-  res.json({ message: upd ? 'Success' : 'Failed', article: upd });
+  
+  // Set a longer timeout for the manual retry request
+  req.setTimeout(60000); 
+
+  try {
+    const upd = await fullyProcessAndSaveArticle(art.url);
+    if (!upd) {
+      throw new Error('Processing returned no data');
+    }
+    // Success! Clear any existing errors for this URL
+    DAO.clearError(art.url);
+    res.json({ message: 'Success', article: upd });
+  } catch (e: any) {
+    console.error('Retry failed:', e);
+    
+    const phase = (e as any).phase || 'retry-article';
+    const stack = e.stack || null;
+    const errorMessage = e.message || 'Unknown error during retry';
+    const titleHint = art.translated_title || art.original_title || '';
+
+    // Log to article_errors so it shows in the UI
+    DAO.logError(art.url, errorMessage, stack, titleHint, phase, JSON.stringify({ manual_retry: true, article_id: art.id }));
+
+    let userFriendlyMessage = 'Failed to retry article';
+    if (e.message.includes('Readability failed')) {
+      userFriendlyMessage = 'Site blocking detected or layout incompatible with reader';
+    } else if (e.message.includes('403')) {
+      userFriendlyMessage = 'Access denied by site (403 Forbidden)';
+    } else if (e.message.includes('timeout')) {
+      userFriendlyMessage = 'Request timed out (site might be slow or blocked)';
+    }
+
+    res.status(500).json({ 
+      message: userFriendlyMessage, 
+      error: e.message,
+      phase,
+      stack
+    });
+  }
 });
 
 app.post('/api/errors/:id/retry', async (req, res) => {
   const err = DAO.getErrorById(parseInt(req.params.id));
   if (!err) return res.status(404).json({ message: 'Not found' });
-  const upd = await fullyProcessAndSaveArticle(err.url);
-  res.json({ message: upd ? 'Success' : 'Failed', article: upd });
+  
+  // Set a longer timeout for the manual retry request
+  req.setTimeout(60000);
+
+  try {
+    const upd = await fullyProcessAndSaveArticle(err.url);
+    if (!upd) {
+      throw new Error('Processing failed without error details');
+    }
+    // Success! The error is cleared automatically by saveArticle/logError logic? 
+    // Actually logError uses REPLACE, but here we want to DELETE it from errors table since it succeeded.
+    DAO.clearError(err.url);
+    res.json({ message: 'Success', article: upd });
+  } catch (e: any) {
+    console.error('Error retry failed:', e);
+
+    const phase = (e as any).phase || 'retry-error';
+    const stack = e.stack || null;
+    const errorMessage = e.message || 'Unknown error during retry';
+    const titleHint = err.title_hint || '';
+
+    // Update the existing error record with new failure details
+    DAO.logError(err.url, errorMessage, stack, titleHint, phase, JSON.stringify({ manual_retry: true, error_id: err.id }));
+
+    res.status(500).json({ 
+      message: 'Failed to retry', 
+      error: e.message,
+      originalError: e.originalError || e.message,
+      phase,
+      stack
+    });
+  }
 });
 
 app.delete('/api/errors/:id', (req, res) => {
