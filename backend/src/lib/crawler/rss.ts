@@ -106,8 +106,13 @@ export async function crawlAllFeeds(): Promise<CrawledArticle[]> {
       for (let i = 0; i < tasks.length; i += 4) {
         await Promise.all(tasks.slice(i, i + 4));
       }
-    } catch (e) {
-      console.error(`Failed to crawl ${source.url}:`, e);
+    } catch (e: any) {
+      const isKnownError = e.message?.includes('Timeout') || e.name === 'TimeoutError';
+      if (isKnownError) {
+        console.error(`Failed to crawl ${source.url}: ${e.message}`);
+      } else {
+        console.error(`Failed to crawl ${source.url}:`, e);
+      }
     }
   }
 

@@ -1,10 +1,12 @@
 {
-  "name": "ai-rss-reader-backend",
+  "name": "backend",
   "version": "1.0.0",
   "main": "src/index.ts",
   "scripts": {
     "dev": "ts-node-dev --respawn -- src/index.ts",
-    "start": "ts-node src/index.ts"
+    "start": "ts-node src/index.ts",
+    "build": "tsc",
+    "worker": "ts-node src/worker.ts"
   },
   "dependencies": {
     "@mozilla/readability": "^0.5.0",
@@ -17,6 +19,7 @@
     "jsdom": "^24.0.0",
     "node-ensure": "^0.0.0",
     "pdf-parse": "^1.1.4",
+    "playwright": "^1.50.0",
     "rss-parser": "^3.13.0"
   },
   "devDependencies": {

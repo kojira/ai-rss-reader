@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { DAO } from './lib/db/index';
@@ -7,7 +8,7 @@ import axios from 'axios';
 import { fullyProcessAndSaveArticle } from './lib/crawler/article';
 
 const app = express();
-const port = 3005;
+const port = process.env.PORT ? parseInt(process.env.PORT) : 3005;
 
 let currentWorker: any = null;
 

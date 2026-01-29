@@ -51,7 +51,7 @@ async function main() {
     for (const article of pending) {
       backfillCount++;
       DAO.updateCrawlerStatus({ 
-        current_task: `Backfilling [${backfillCount}/${pending.length}] ${article.original_title.slice(0, 20)}...`,
+        current_task: `Backfilling [${backfillCount}/${pending.length}] ${(article.original_title || 'Untitled').slice(0, 20)}...`,
         articles_processed: backfillCount
       });
       try {
@@ -81,7 +81,7 @@ async function main() {
   for (const article of unprocessed) {
     processedCount++;
     DAO.updateCrawlerStatus({ 
-      current_task: `Phase 2: Evaluating [${processedCount}/${unprocessed.length}] ${article.original_title.slice(0, 20)}...`,
+      current_task: `Phase 2: Evaluating [${processedCount}/${unprocessed.length}] ${(article.original_title || 'Untitled').slice(0, 20)}...`,
       articles_processed: processedCount
     });
 

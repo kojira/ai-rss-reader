@@ -609,6 +609,7 @@ export default function App() {
                       <PolarGrid />
                       {/* @ts-ignore */}
                       <PolarAngleAxis dataKey="subject" />
+                      {/* @ts-ignore */}
                       <PolarRadiusAxis angle={30} domain={[0, 5]} />
                       {/* @ts-ignore */}
                       <Radar dataKey="A" stroke="#1976d2" fill="#1976d2" fillOpacity={0.5} />

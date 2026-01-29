@@ -12,7 +12,7 @@ export async function evaluateArticle(article: CrawledArticle): Promise<Evaluati
 以下の記事を評価し、指定されたフォーマットのJSONで出力してください。
 
 記事タイトル: ${article.title}
-記事本文: ${article.content.slice(0, 5000)}
+記事本文: ${(article.content || '').slice(0, 5000)}
 
 評価軸(1-5点):
 1. novelty (新規性): 情報の鮮度。
@@ -57,12 +57,29 @@ export async function evaluateArticle(article: CrawledArticle): Promise<Evaluati
       throw new Error(`LLM response structure invalid: ${JSON.stringify(response.data)}`);
     }
 
-    const result = JSON.parse(response.data.choices[0].message.content);
-    if (!result.scores || typeof result.scores.novelty !== 'number') {
+    let result = JSON.parse(response.data.choices[0].message.content);
+
+    // LLMが配列で返した場合は最初の要素を取り出す
+    if (Array.isArray(result)) {
+      result = result[0];
+    }
+
+    if (!result.scores) {
       throw new Error(`LLM returned invalid result structure: ${response.data.choices[0].message.content}`);
     }
 
+    // スコアが文字列の場合は数値に変換
     const scores = result.scores;
+    scores.novelty = Number(scores.novelty);
+    scores.importance = Number(scores.importance);
+    scores.reliability = Number(scores.reliability);
+    scores.contextValue = Number(scores.contextValue);
+    scores.thoughtProvoking = Number(scores.thoughtProvoking);
+
+    if (isNaN(scores.novelty)) {
+      throw new Error(`LLM returned invalid scores: ${response.data.choices[0].message.content}`);
+    }
+
     const averageScore = (scores.novelty + scores.importance + scores.reliability + scores.contextValue + scores.thoughtProvoking) / 5;
 
     return {

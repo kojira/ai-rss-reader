@@ -81,6 +81,13 @@ db.exec(`
     FOREIGN KEY(char_b_id) REFERENCES characters(id)
   );
 
+  CREATE TABLE IF NOT EXISTS blocked_domains (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain TEXT UNIQUE,
+    reason TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
   INSERT OR IGNORE INTO configs (id, score_threshold) VALUES (1, 3.5);
   INSERT OR IGNORE INTO crawler_status (id, is_crawling, articles_processed) VALUES (1, 0, 0);
 
@@ -219,7 +226,9 @@ export class DAO {
     }
     sql += ' ORDER BY CASE WHEN published_at IS NOT NULL AND published_at != \'\' THEN published_at ELSE created_at END DESC LIMIT ? OFFSET ?';
     params.push(limit, offset);
-    return db.prepare(sql).all(...params) as Article[];
+
+    const articles = db.prepare(sql).all(...params) as Article[];
+    return this.filterBlockedDomains(articles);
   }
   static getArticleById(id: number): Article | undefined {
     return db.prepare('SELECT * FROM articles WHERE id = ?').get(id) as Article | undefined;
@@ -275,9 +284,41 @@ export class DAO {
     return db.prepare('INSERT INTO scripts (article_id, content_json, char_a_id, char_b_id) VALUES (?, ?, ?, ?)').run(aid, json, caid, cbid);
   }
   static getUnprocessedArticles(limit = 10): Article[] {
-    return db.prepare('SELECT * FROM articles WHERE average_score IS NULL OR length(content) < 200 ORDER BY created_at DESC LIMIT ?').all(limit) as Article[];
+    const articles = db.prepare('SELECT * FROM articles WHERE average_score IS NULL OR length(content) < 200 ORDER BY created_at DESC LIMIT ?').all(limit) as Article[];
+    return this.filterBlockedDomains(articles);
   }
   static getArticlesWithoutImages(limit = 100): Article[] {
-    return db.prepare('SELECT * FROM articles WHERE image_url IS NULL OR image_url = \'\' ORDER BY created_at DESC LIMIT ?').all(limit) as Article[];
+    const articles = db.prepare('SELECT * FROM articles WHERE image_url IS NULL OR image_url = \'\' ORDER BY created_at DESC LIMIT ?').all(limit) as Article[];
+    return this.filterBlockedDomains(articles);
+  }
+  // ブロック済みドメインの記事を除外するヘルパー
+  private static filterBlockedDomains(articles: Article[]): Article[] {
+    const blockedDomains = this.getBlockedDomains().map(d => d.domain);
+    if (blockedDomains.length === 0) return articles;
+
+    return articles.filter(article => {
+      const urlToCheck = article.resolved_url || article.url;
+      try {
+        const domain = new URL(urlToCheck).hostname;
+        return !blockedDomains.includes(domain);
+      } catch {
+        return true;
+      }
+    });
+  }
+
+  // ブロックリスト関連
+  static getBlockedDomains(): { id: number; domain: string; reason: string; created_at: string }[] {
+    return db.prepare('SELECT * FROM blocked_domains ORDER BY created_at DESC').all() as any[];
+  }
+  static isBlockedDomain(domain: string): boolean {
+    const result = db.prepare('SELECT 1 FROM blocked_domains WHERE domain = ?').get(domain);
+    return !!result;
+  }
+  static addBlockedDomain(domain: string, reason: string) {
+    return db.prepare('INSERT OR IGNORE INTO blocked_domains (domain, reason) VALUES (?, ?)').run(domain, reason);
+  }
+  static removeBlockedDomain(id: number) {
+    return db.prepare('DELETE FROM blocked_domains WHERE id = ?').run(id);
   }
 }

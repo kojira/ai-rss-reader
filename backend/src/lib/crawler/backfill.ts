@@ -26,8 +26,16 @@ export async function backfillImages() {
       
       // Rate limiting: wait 1 second between requests
       await new Promise(resolve => setTimeout(resolve, 1000));
-    } catch (e) {
-      console.error(`Failed to backfill image for ${article.url}:`, e);
+    } catch (e: any) {
+      const isKnownError = e.message?.includes('Timeout') ||
+                          e.message?.includes('blocked') ||
+                          e.message?.includes('Bot protection') ||
+                          e.name === 'TimeoutError';
+      if (isKnownError) {
+        console.error(`Failed to backfill image for ${article.url}: ${e.message}`);
+      } else {
+        console.error(`Failed to backfill image for ${article.url}:`, e);
+      }
     }
   }
 
