@@ -5,9 +5,10 @@ import {
   TextField, List, ListItem, ListItemText, ListItemSecondaryAction, Avatar, CircularProgress,
   Paper, Tabs, Tab, MenuItem, Select, FormControl, InputLabel, Slider, CardMedia
 } from '@mui/material';
-import { Refresh, Settings, Delete, Add, ChatBubbleOutline, PersonAdd, Share as IosShare, FilterList, Newspaper as NewspaperIcon, ViewModule, ViewStream } from '@mui/icons-material';
+import { Refresh, Settings, Delete, Add, ChatBubbleOutline, PersonAdd, Share as IosShare, FilterList, Newspaper as NewspaperIcon, ViewModule, ViewStream, KeyboardArrowUp } from '@mui/icons-material';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts';
 import axios from 'axios';
+import { Fab, Zoom, useScrollTrigger } from '@mui/material';
 
 interface Article {
   id: number;
@@ -235,6 +236,18 @@ export default function App() {
   const deleteChar = async (id: number) => { await axios.delete(`/api/characters/${id}`); fetchInitialData(); };
   const addSource = async () => { if (!newSourceUrl) return; await axios.post('/api/sources', { url: newSourceUrl, name: newSourceName }); setNewSourceUrl(''); setNewSourceName(''); fetchInitialData(); };
   const deleteSource = async (id: number) => { await axios.delete(`/api/sources/${id}`); fetchInitialData(); };
+
+  const trigger = useScrollTrigger({
+    disableHysteresis: true,
+    threshold: 300,
+  });
+
+  const scrollToTop = () => {
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth',
+    });
+  };
 
   const ingestUrlAction = async () => {
     if (!ingestUrl) return;
@@ -703,6 +716,26 @@ export default function App() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <Zoom in={trigger}>
+        <Fab
+          color="primary"
+          size="small"
+          onClick={scrollToTop}
+          sx={{
+            position: 'fixed',
+            bottom: 32,
+            right: 32,
+            boxShadow: 3,
+            '&:hover': {
+              transform: 'scale(1.1)',
+            },
+          }}
+          aria-label="scroll back to top"
+        >
+          <KeyboardArrowUp />
+        </Fab>
+      </Zoom>
     </Box>
   );
 }
