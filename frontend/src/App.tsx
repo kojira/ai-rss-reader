@@ -5,7 +5,7 @@ import {
   TextField, List, ListItem, ListItemText, ListItemSecondaryAction, Avatar, CircularProgress,
   Paper, Tabs, Tab, MenuItem, Select, FormControl, InputLabel, Slider, CardMedia
 } from '@mui/material';
-import { Refresh, Settings, Delete, Add, ChatBubbleOutline, PersonAdd, Share as IosShare, FilterList, Newspaper as NewspaperIcon, ViewModule, ViewStream, KeyboardArrowUp } from '@mui/icons-material';
+import { Refresh, Settings, Delete, Add, ChatBubbleOutline, PersonAdd, Share as IosShare, FilterList, Newspaper as NewspaperIcon, ViewModule, ViewStream, KeyboardArrowUp, Close } from '@mui/icons-material';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts';
 import axios from 'axios';
 import { Fab, Zoom, useScrollTrigger } from '@mui/material';
@@ -575,7 +575,13 @@ export default function App() {
 
       <Dialog open={!!selectedArticle} onClose={() => setSelectedArticle(null)} maxWidth="lg" fullWidth>
         {selectedArticle && (
-          <DialogContent sx={{ p: 0 }}>
+          <DialogContent sx={{ p: 0, position: 'relative' }}>
+            <IconButton
+              onClick={() => setSelectedArticle(null)}
+              sx={{ position: 'absolute', top: 8, right: 8, zIndex: 1, bgcolor: 'rgba(255,255,255,0.8)', '&:hover': { bgcolor: 'rgba(255,255,255,0.95)' } }}
+            >
+              <Close />
+            </IconButton>
             <Grid container sx={{ minHeight: '80vh' }}>
               <Grid item xs={12} md={4} sx={{ borderRight: '1px solid #ddd', p: 3, bgcolor: '#fafafa' }}>
                 <Box sx={{ width: '100%', mb: 2 }}>
