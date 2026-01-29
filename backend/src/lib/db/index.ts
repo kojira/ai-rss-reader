@@ -173,7 +173,14 @@ export class DAO {
     return db.prepare('SELECT * FROM crawler_status WHERE id = 1').get() as any;
   }
   static updateCrawlerStatus(status: any) {
-    const current = this.getCrawlerStatus();
+    const current = this.getCrawlerStatus() || { 
+      is_crawling: 0, 
+      last_run: null, 
+      current_task: 'Idle', 
+      articles_processed: 0, 
+      last_error: null, 
+      worker_pid: null 
+    };
     // Only update fields provided in the status object, keeping others intact
     const updated = { 
       is_crawling: status.is_crawling !== undefined ? status.is_crawling : current.is_crawling,
@@ -186,6 +193,10 @@ export class DAO {
     
     db.prepare(`UPDATE crawler_status SET is_crawling = ?, last_run = ?, current_task = ?, articles_processed = ?, last_error = ?, worker_pid = ? WHERE id = 1`)
       .run(updated.is_crawling, updated.last_run, updated.current_task, updated.articles_processed, updated.last_error, updated.worker_pid);
+  }
+  static resetCrawlerStatus(task = 'Idle') {
+    db.prepare(`UPDATE crawler_status SET is_crawling = 0, current_task = ?, worker_pid = NULL WHERE id = 1`)
+      .run(task);
   }
   static getConfig(): Config {
     return db.prepare('SELECT * FROM configs WHERE id = 1').get() as Config;
@@ -206,7 +217,7 @@ export class DAO {
       sql += ' AND average_score >= ?';
       params.push(minScore);
     }
-    sql += ' ORDER BY COALESCE(published_at, created_at) DESC LIMIT ? OFFSET ?';
+    sql += ' ORDER BY CASE WHEN published_at IS NOT NULL AND published_at != \'\' THEN published_at ELSE created_at END DESC LIMIT ? OFFSET ?';
     params.push(limit, offset);
     return db.prepare(sql).all(...params) as Article[];
   }

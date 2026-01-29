@@ -7,8 +7,25 @@ import { fullyProcessAndSaveArticle } from './lib/crawler/article';
 
 async function main() {
   console.log('Starting AI RSS Reader cycle...');
+
+  // --- Singleton / Self-Correction Check ---
+  const initialStatus = DAO.getCrawlerStatus();
+  if (initialStatus.is_crawling === 1 && initialStatus.worker_pid) {
+    try {
+      process.kill(initialStatus.worker_pid, 0);
+      if (initialStatus.worker_pid !== process.pid && initialStatus.worker_pid !== process.ppid) {
+        console.log(`Another worker is already running (PID: ${initialStatus.worker_pid}, Mine: ${process.pid}, Parent: ${process.ppid}). Exiting.`);
+        return;
+      }
+      console.log(`Confirmed PID ${initialStatus.worker_pid} is actually me or my parent.`);
+    } catch (e) {
+      console.log(`Stale worker PID ${initialStatus.worker_pid} detected. Clearing.`);
+    }
+  }
+
   DAO.updateCrawlerStatus({ 
     is_crawling: 1, 
+    worker_pid: process.pid,
     last_run: new Date().toISOString(),
     current_task: 'Initializing...'
   });
@@ -24,15 +41,39 @@ async function main() {
     DAO.addRssSource('https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml', 'NYT Tech');
   }
 
+  // --- High Priority: Backfill Unprocessed Articles IMMEDIATELY ---
+  const pending = DAO.getUnprocessedArticles(50);
+  if (pending.length > 0) {
+    console.log(`High Priority: Processing ${pending.length} existing articles first.`);
+    DAO.updateCrawlerStatus({ current_task: `Backfilling ${pending.length} unprocessed articles...` });
+    
+    let backfillCount = 0;
+    for (const article of pending) {
+      backfillCount++;
+      DAO.updateCrawlerStatus({ 
+        current_task: `Backfilling [${backfillCount}/${pending.length}] ${article.original_title.slice(0, 20)}...`,
+        articles_processed: backfillCount
+      });
+      try {
+        await fullyProcessAndSaveArticle(article.url);
+      } catch (e: any) {
+        console.error(`Backfill failed for ${article.url}:`, e.message);
+      }
+    }
+  }
+
   // 1. Crawl Phase
-  DAO.updateCrawlerStatus({ current_task: 'Phase 1: Crawling all feeds (Parallel)...' });
+  DAO.updateCrawlerStatus({ 
+    current_task: 'Phase 1: Crawling all feeds (Parallel)...',
+    articles_processed: 0 
+  });
   await crawlAllFeeds();
 
-  // Backfill Phase
+  // Backfill Phase (Images)
   DAO.updateCrawlerStatus({ current_task: 'Phase: Backfilling images...' });
   await backfillImages();
   
-  // 2. Evaluation Phase
+  // 2. Evaluation Phase (New Articles)
   const unprocessed = DAO.getUnprocessedArticles(50);
   console.log(`Phase 2: Evaluating ${unprocessed.length} new articles.`);
   
@@ -44,80 +85,18 @@ async function main() {
       articles_processed: processedCount
     });
 
-    let currentPhase = 'CRAWL';
-    let currentContext = 'Fetching and parsing article content';
     try {
-      // 1. Crawl
-      const processed = await processArticle(article.url);
-
-      // 2. Save Initial
-      DAO.saveArticle({
-        url: processed.url,
-        original_title: processed.title,
-        content: processed.content,
-        image_url: processed.imageUrl,
-      });
-
-      // 3. Evaluate
-      currentPhase = 'EVAL';
-      currentContext = 'Analyzing content with AI';
-      const articleObj: CrawledArticle = {
-        url: processed.url,
-        title: processed.title,
-        content: processed.content,
-        originalUrl: article.url,
-        pubDate: new Date().toISOString(),
-        imageUrl: processed.imageUrl
-      };
-
-      const evaluation = await evaluateArticle(articleObj);
-      if (!evaluation) {
-        throw new Error('LLM Evaluation returned null or failed silently');
-      }
-
-      // 4. Update with Scores
-      DAO.saveArticle({
-        url: processed.url,
-        translated_title: evaluation.translatedTitle,
-        summary: evaluation.summary,
-        short_summary: evaluation.shortSummary,
-        score_novelty: evaluation.scores.novelty,
-        score_importance: evaluation.scores.importance,
-        score_reliability: evaluation.scores.reliability,
-        score_context_value: evaluation.scores.contextValue,
-        score_thought_provoking: evaluation.scores.thoughtProvoking,
-        average_score: evaluation.averageScore
-      });
-
-      // 5. Notify
-      currentPhase = 'NOTIFY';
-      currentContext = 'Sending Discord notification';
-      await sendDiscordNotification(articleObj, evaluation).catch(e => console.error('Discord error:', e));
-      
-      // 6. Clear error if it succeeded
-      DAO.clearError(article.url);
+      await fullyProcessAndSaveArticle(article.url);
     } catch (e: any) {
       console.error(`Article failed but loop continues: ${article.url}`, e.message);
-      
-      let humanMessage = e.message;
-      if (e.code === 'ECONNABORTED' || e.message.includes('timeout')) {
-        humanMessage = 'Failed to reach source (Timeout)';
-      } else if (e.response?.status === 404) {
-        humanMessage = 'Article not found (404)';
-      } else if (e.message.includes('invalid JSON') || e.message.includes('LLM Evaluation')) {
-        humanMessage = 'AI returned invalid analysis data';
-      } else if (e.message.includes('Readability failed')) {
-        humanMessage = 'Could not extract readable text from page';
-      }
-
-      DAO.logError(article.url, humanMessage, e.stack, article.original_title, currentPhase, currentContext);
     }
   }
 
   DAO.updateCrawlerStatus({ 
     is_crawling: 0, 
     current_task: 'Idle',
-    articles_processed: processedCount
+    articles_processed: processedCount,
+    worker_pid: null
   });
   console.log('Cycle complete.');
 }

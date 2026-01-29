@@ -443,7 +443,12 @@ export default function App() {
               <Card sx={{ height: '100%', cursor: 'pointer', display: 'flex', flexDirection: 'column', '&:hover': { transform: 'translateY(-4px)', boxShadow: 4 } }} onClick={() => setSelectedArticle(article)}>
                 <ImageWithFallback src={article.image_url} alt={article.original_title} />
                 <CardContent sx={{ flexGrow: 1 }}>
-                  <Box display="flex" justifyContent="space-between" mb={1}><Typography variant="caption" color="text.secondary">{new Date(article.published_at || article.created_at).toLocaleDateString()}</Typography><Chip label={article.average_score?.toFixed(1) || 'N/A'} color="primary" size="small" /></Box>
+                  <Box display="flex" justifyContent="space-between" mb={1}>
+                    <Typography variant="caption" color="text.secondary">
+                      {new Date(article.published_at && article.published_at.trim() !== "" ? article.published_at : article.created_at).toLocaleString()}
+                    </Typography>
+                    <Chip label={article.average_score?.toFixed(1) || 'N/A'} color="primary" size="small" />
+                  </Box>
                   <Typography variant="h6" sx={{ fontSize: '1.1rem', fontWeight: 'bold', mb: 1 }}>{article.translated_title || article.original_title}</Typography>
                   <Typography variant="body2" color="text.secondary" sx={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{article.short_summary}</Typography>
                 </CardContent>
@@ -505,6 +510,9 @@ export default function App() {
                     </RadarChart>
                   </ResponsiveContainer>
                 </Box>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  {new Date(selectedArticle.published_at && selectedArticle.published_at.trim() !== "" ? selectedArticle.published_at : selectedArticle.created_at).toLocaleString()}
+                </Typography>
                 <Typography variant="body2" color="text.secondary">{selectedArticle.summary}</Typography>
               </Grid>
               <Grid item xs={12} md={8} sx={{ display: 'flex', flexDirection: 'column' }}>

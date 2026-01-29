@@ -112,29 +112,39 @@ app.post('/api/articles/:id/scripts', async (req, res) => {
     };
     const lengthStr = lengthMap[req.body.length] || '10-15 lines';
 
-    const prompt = `Create a dialogue script in Japanese between two characters:
-Character A: ${cA.name} (Persona: ${cA.persona})
-Character B: ${cB.name} (Persona: ${cB.persona})
+    const prompt = `Create a deep-dive educational dialogue script in Japanese between two characters:
+Character A (Expert): ${cA.name} (Persona: ${cA.persona})
+Character B (Learner): ${cB.name} (Persona: ${cB.persona})
 
 Topic: ${art.translated_title || art.original_title}
-Content: ${art.summary || (art.content || '').slice(0, 2000)}
+Main Article Content: ${art.summary || (art.content || '').slice(0, 4000)}
+
+Objective:
+The MAIN objective is to comprehensively explain the ENTIRE content of the provided article through a natural conversation. This should feel like a deep-dive educational chat rather than a shallow skit.
 
 Requirements:
-- MANDATORY: The FIRST speaker MUST be "B" (Character B).
-- Character B should start with a relatable question, a reaction to the headline, or an expression of confusion about the topic to engage the listener.
-- Character A should then respond to B's lead.
-- MUST be a consistent back-and-forth conversation between Character B and Character A.
-- Character A acts as the "speaker" value "A".
-- Character B acts as the "speaker" value "B".
-- Length: approximately ${lengthStr}.
-- Tone: Natural and engaging Japanese.
-- Output MUST be a valid JSON array of objects.
+1. Information Coverage (Mandatory):
+   - EVERY key piece of information, factual detail, and major point in the article MUST be touched upon during the conversation.
+   - Character B (Learner) must ask specific questions that guide the conversation through ALL key sections/points of the article.
+   - Character A (Expert) must provide factual, detailed information from the article in their responses.
+   - Reduce "filler" or "skit-like" dialogue (jokes, unrelated banter, excessive greetings) that isn't directly related to explaining the news content.
 
-Output Format:
+2. Structure and Roles:
+   - The FIRST speaker MUST be "B" (Character B).
+   - Maintain a consistent back-and-forth: B asks/reacts, A explains in detail.
+   - No Katakana conversion of names: Use the EXACT spelling provided for names (A="${cA.name}", B="${cB.name}").
+   - Character A value for "speaker" is strictly "A".
+   - Character B value for "speaker" is strictly "B".
+
+3. Tone and Length:
+   - Natural but highly informative Japanese.
+   - Length: approximately ${lengthStr}.
+
+Output Format (MUST be a valid JSON array of objects):
 [
-  {"speaker": "B", "text": "Character B's opening question or reaction..."},
-  {"speaker": "A", "text": "Character A's response..."},
-  {"speaker": "B", "text": "Character B's follow-up..."},
+  {"speaker": "B", "text": "Character B's opening question or observation about the headline..."},
+  {"speaker": "A", "text": "Character A's detailed factual explanation..."},
+  {"speaker": "B", "text": "Character B's follow-up question about the next key point in the article..."},
   ...
 ]`;
 
@@ -183,7 +193,19 @@ app.post('/api/sources', (req, res) => { DAO.addRssSource(req.body.url, req.body
 app.delete('/api/sources/:id', (req, res) => { DAO.deleteRssSource(parseInt(req.params.id)); res.json({ message: 'Deleted' }); });
 
 app.get('/api/status', (req, res) => {
-  const status = DAO.getCrawlerStatus();
+  let status = DAO.getCrawlerStatus();
+  
+  // OS check for worker_pid
+  if (status.is_crawling === 1 && status.worker_pid) {
+    try {
+      process.kill(status.worker_pid, 0); // Check if alive
+    } catch (e) {
+      console.log(`Worker PID ${status.worker_pid} found dead. Resetting status.`);
+      DAO.resetCrawlerStatus('Idle (Worker died)');
+      status = DAO.getCrawlerStatus();
+    }
+  }
+
   const errors = DAO.getErrors();
   res.json({ ...status, errors });
 });
@@ -192,11 +214,10 @@ app.post('/api/crawl', (req, res) => {
   const status = DAO.getCrawlerStatus();
   if (status.is_crawling === 1 && status.worker_pid) {
     try {
-      process.kill(status.worker_pid, 0); // Check if process exists
+      process.kill(status.worker_pid, 0); 
       return res.status(400).json({ message: 'A crawl is already in progress' });
     } catch (e) {
-      // Process doesn't actually exist despite DB state, continue
-      DAO.updateCrawlerStatus({ is_crawling: 0, worker_pid: null });
+      // Process doesn't actually exist
     }
   }
 
@@ -204,7 +225,8 @@ app.post('/api/crawl', (req, res) => {
   console.log(`Spawning worker at: ${workerPath}`);
   const child = spawn('npx', ['ts-node', workerPath], {
     detached: true,
-    stdio: 'ignore'
+    stdio: 'inherit',
+    env: { ...process.env, WORKER_PID: 'true' }
   });
 
   child.unref();
@@ -217,7 +239,6 @@ app.post('/api/crawl', (req, res) => {
       articles_processed: 0,
       last_error: null
     });
-    currentWorker = child;
     res.json({ message: 'Started', pid: child.pid });
   } else {
     res.status(500).json({ message: 'Failed to spawn worker' });
@@ -228,13 +249,13 @@ app.delete('/api/crawl', (req, res) => {
   const status = DAO.getCrawlerStatus();
   if (status.worker_pid) {
     try {
-      // Use negative PID to kill the whole process group since it was detached
-      process.kill(-status.worker_pid, 'SIGTERM');
+      console.log(`Killing worker PID group: ${status.worker_pid}`);
+      process.kill(-status.worker_pid, 'SIGKILL');
     } catch (e) {
-      try { process.kill(status.worker_pid, 'SIGTERM'); } catch (e2) {}
+      try { process.kill(status.worker_pid, 'SIGKILL'); } catch (e2) {}
     }
   }
-  DAO.updateCrawlerStatus({ is_crawling: 0, current_task: 'Stopped', worker_pid: null });
+  DAO.resetCrawlerStatus('Stopped by user');
   res.json({ message: 'Stopped' });
 });
 
