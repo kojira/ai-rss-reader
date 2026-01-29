@@ -345,11 +345,11 @@ export default function App() {
     });
   }, [articles, filterKeywords, filterThresholds]);
 
-  const ImageWithFallback = ({ src, alt, height = '100%' }: { src: string | null, alt: string, height?: number | string }) => {
+  const ImageWithFallback = ({ src, alt }: { src: string | null, alt: string }) => {
     const [error, setError] = useState(false);
     if (!src || error) {
       return (
-        <Box sx={{ height, width: '100%', bgcolor: '#e0e0e0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9e9e9e' }}>
+        <Box sx={{ width: '100%', aspectRatio: '16/9', bgcolor: '#e0e0e0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9e9e9e', borderRadius: 1 }}>
           <NewspaperIcon sx={{ fontSize: '2rem' }} />
         </Box>
       );
@@ -359,7 +359,14 @@ export default function App() {
         component="img"
         image={src}
         alt={alt}
-        sx={{ objectFit: 'cover', height: '100%', width: '100%' }}
+        sx={{ 
+          width: '100%', 
+          height: 'auto', 
+          maxHeight: '400px', 
+          objectFit: 'contain', 
+          borderRadius: 1,
+          bgcolor: '#f0f0f0'
+        }}
         onError={() => setError(true)}
       />
     );
@@ -492,25 +499,30 @@ export default function App() {
           margin: '0 auto'
         }}>
           {filteredArticles.map((article) => (
-            <Box 
-              key={article.id} 
-              sx={{ width: '100%', maxWidth: 360, justifySelf: 'center' }}
-            >
-              <Card sx={{ 
-                height: '100%', 
-                cursor: 'pointer', 
-                display: 'flex', 
-                flexDirection: 'column', 
-                '&:hover': { transform: 'translateY(-4px)', boxShadow: 4 },
-                bgcolor: '#fff',
-                borderRadius: 2,
-                overflow: 'hidden'
-              }} onClick={() => setSelectedArticle(article)}>
-                <Box sx={{ width: '100%', pt: '56.25%', position: 'relative' }}>
-                  <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
-                    <ImageWithFallback src={article.image_url} alt={article.original_title} height="100%" />
-                  </Box>
+          <Box key={article.id} sx={{ width: '100%', maxWidth: 360, justifySelf: 'center' }}>
+            <Card sx={{ 
+              height: '100%', 
+              cursor: 'pointer', 
+              display: 'flex', 
+              flexDirection: 'column', 
+              '&:hover': { transform: 'translateY(-4px)', boxShadow: 4 },
+              bgcolor: '#fff',
+              borderRadius: 2,
+              overflow: 'hidden'
+            }} onClick={() => setSelectedArticle(article)}>
+              <Box sx={{ width: '100%', pt: '56.25%', position: 'relative' }}>
+                <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+                  <CardMedia
+                    component="img"
+                    image={article.image_url || undefined}
+                    alt={article.original_title}
+                    sx={{ objectFit: 'cover', height: '100%', width: '100%' }}
+                    onError={(e: any) => {
+                      e.target.src = 'data:image/svg+xml;charset=UTF-8,%3Csvg%20width%3D%22200%22%20height%3D%22112%22%20xmlns%3D%22http%3D%22//www.w3.org/2000/svg%22%20viewBox%3D%220%200%20200%20112%22%20preserveAspectRatio%3D%22none%22%3E%3Crect%20width%3D%22200%22%20height%3D%22112%22%20fill%3D%22%23e0e0e0%22%3E%3C/rect%3E%3C/svg%3E';
+                    }}
+                  />
                 </Box>
+              </Box>
                 <CardContent sx={{ 
                   flexGrow: 1, 
                   p: gridLayout === 2 ? 1 : 1.5, 
@@ -566,8 +578,10 @@ export default function App() {
           <DialogContent sx={{ p: 0 }}>
             <Grid container sx={{ minHeight: '80vh' }}>
               <Grid item xs={12} md={4} sx={{ borderRight: '1px solid #ddd', p: 3, bgcolor: '#fafafa' }}>
-                <ImageWithFallback src={selectedArticle.image_url} alt={selectedArticle.original_title} height={200} />
-                <Box display="flex" justifyContent="space-between" alignItems="flex-start" sx={{ mt: 2 }}>
+                <Box sx={{ width: '100%', mb: 2 }}>
+                  <ImageWithFallback src={selectedArticle.image_url} alt={selectedArticle.original_title} />
+                </Box>
+                <Box display="flex" justifyContent="space-between" alignItems="flex-start">
                   <Typography 
                     variant="h6" 
                     component="a" 
