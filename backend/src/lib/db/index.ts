@@ -32,6 +32,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     url TEXT UNIQUE,
     resolved_url TEXT,
+    domain TEXT,
     original_title TEXT,
     translated_title TEXT,
     summary TEXT,
@@ -100,18 +101,29 @@ try {
     const columns = db.prepare("PRAGMA table_info(articles)").all() as any[];
     const required = [
         'resolved_url',
-        'score_novelty', 
-        'score_importance', 
-        'score_reliability', 
-        'score_context_value', 
+        'domain',
+        'score_novelty',
+        'score_importance',
+        'score_reliability',
+        'score_context_value',
         'score_thought_provoking',
         'published_at'
     ];
     for (const col of required) {
         if (!columns.some(c => c.name === col)) {
-            const type = (col === 'resolved_url' || col === 'published_at') ? 'TEXT' : 'REAL';
+            const type = (col === 'resolved_url' || col === 'published_at' || col === 'domain') ? 'TEXT' : 'REAL';
             db.exec(`ALTER TABLE articles ADD COLUMN ${col} ${type}`);
         }
+    }
+
+    // Backfill domain for existing articles
+    const articlesWithoutDomain = db.prepare('SELECT id, url, resolved_url FROM articles WHERE domain IS NULL').all() as any[];
+    for (const article of articlesWithoutDomain) {
+        const urlToCheck = article.resolved_url || article.url;
+        try {
+            const domain = new URL(urlToCheck).hostname;
+            db.prepare('UPDATE articles SET domain = ? WHERE id = ?').run(domain, article.id);
+        } catch {}
     }
     const errorColumns = db.prepare("PRAGMA table_info(article_errors)").all() as any[];
     if (!errorColumns.some(c => c.name === 'phase')) {
@@ -148,6 +160,7 @@ export interface Article {
   id: number;
   url: string;
   resolved_url: string | null;
+  domain: string | null;
   original_title: string;
   translated_title: string | null;
   summary: string | null;
@@ -214,7 +227,7 @@ export class DAO {
     db.prepare(`UPDATE configs SET open_router_api_key = ?, discord_webhook_url = ?, score_threshold = ? WHERE id = 1`).run(updated.open_router_api_key, updated.discord_webhook_url, updated.score_threshold);
   }
   static getArticles(limit = 20, offset = 0, keyword = '', minScore = 0): Article[] {
-    let sql = 'SELECT * FROM articles WHERE 1=1';
+    let sql = 'SELECT * FROM articles WHERE (domain IS NULL OR domain NOT IN (SELECT domain FROM blocked_domains))';
     const params: any[] = [];
     if (keyword) {
       sql += ' AND (original_title LIKE ? OR translated_title LIKE ? OR summary LIKE ?)';
@@ -227,8 +240,7 @@ export class DAO {
     sql += ' ORDER BY CASE WHEN published_at IS NOT NULL AND published_at != \'\' THEN published_at ELSE created_at END DESC LIMIT ? OFFSET ?';
     params.push(limit, offset);
 
-    const articles = db.prepare(sql).all(...params) as Article[];
-    return this.filterBlockedDomains(articles);
+    return db.prepare(sql).all(...params) as Article[];
   }
   static getArticleById(id: number): Article | undefined {
     return db.prepare('SELECT * FROM articles WHERE id = ?').get(id) as Article | undefined;
@@ -237,6 +249,16 @@ export class DAO {
     return db.prepare('SELECT * FROM articles WHERE url = ?').get(url) as Article | undefined;
   }
   static saveArticle(article: Partial<Article>) {
+    // Auto-extract domain from resolved_url or url
+    if (!article.domain) {
+      const urlToCheck = article.resolved_url || article.url;
+      if (urlToCheck) {
+        try {
+          article.domain = new URL(urlToCheck).hostname;
+        } catch {}
+      }
+    }
+
     const keys = Object.keys(article);
     const columns = keys.join(', ');
     const placeholders = keys.map(() => '?').join(', ');
@@ -284,27 +306,20 @@ export class DAO {
     return db.prepare('INSERT INTO scripts (article_id, content_json, char_a_id, char_b_id) VALUES (?, ?, ?, ?)').run(aid, json, caid, cbid);
   }
   static getUnprocessedArticles(limit = 10): Article[] {
-    const articles = db.prepare('SELECT * FROM articles WHERE average_score IS NULL OR length(content) < 200 ORDER BY created_at DESC LIMIT ?').all(limit) as Article[];
-    return this.filterBlockedDomains(articles);
+    return db.prepare(`
+      SELECT * FROM articles
+      WHERE (average_score IS NULL OR length(content) < 200)
+        AND (domain IS NULL OR domain NOT IN (SELECT domain FROM blocked_domains))
+      ORDER BY created_at DESC LIMIT ?
+    `).all(limit) as Article[];
   }
   static getArticlesWithoutImages(limit = 100): Article[] {
-    const articles = db.prepare('SELECT * FROM articles WHERE image_url IS NULL OR image_url = \'\' ORDER BY created_at DESC LIMIT ?').all(limit) as Article[];
-    return this.filterBlockedDomains(articles);
-  }
-  // ブロック済みドメインの記事を除外するヘルパー
-  private static filterBlockedDomains(articles: Article[]): Article[] {
-    const blockedDomains = this.getBlockedDomains().map(d => d.domain);
-    if (blockedDomains.length === 0) return articles;
-
-    return articles.filter(article => {
-      const urlToCheck = article.resolved_url || article.url;
-      try {
-        const domain = new URL(urlToCheck).hostname;
-        return !blockedDomains.includes(domain);
-      } catch {
-        return true;
-      }
-    });
+    return db.prepare(`
+      SELECT * FROM articles
+      WHERE (image_url IS NULL OR image_url = '')
+        AND (domain IS NULL OR domain NOT IN (SELECT domain FROM blocked_domains))
+      ORDER BY created_at DESC LIMIT ?
+    `).all(limit) as Article[];
   }
 
   // ブロックリスト関連
