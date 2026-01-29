@@ -67,7 +67,7 @@ export async function evaluateArticle(article: CrawledArticle): Promise<Evaluati
   }
 }
 
-export async function generateDialogue(article: any): Promise<any[] | null> {
+export async function generateDialogue(article: any, length: string = 'medium'): Promise<any[] | null> {
   const config = DAO.getConfig();
   const characters = DAO.getCharacters();
   const charA = characters.find(c => c.role === 'expert') || characters[0];
@@ -78,25 +78,30 @@ export async function generateDialogue(article: any): Promise<any[] | null> {
     return null;
   }
 
-  const prompt = `
-以下のニュース記事の内容に基づいて、${charA.name}と${charB.name}の二人のキャラクターによる対談形式の解説スクリプトを作成してください。
+  const lengthMap: Record<string, string> = {
+    short: '5-8 lines',
+    medium: '10-15 lines',
+    long: '20-25 lines'
+  };
+  const lengthStr = lengthMap[length] || '10-15 lines';
 
-【キャラクター設定】
-- ${charA.name}: ${charA.persona}
-- ${charB.name}: ${charB.persona}
+  const prompt = `Create a dialogue script in Japanese between two characters based on the news article:
+Expert ${charA.name} (Persona: ${charA.persona})
+Learner ${charB.name} (Persona: ${charB.persona})
 
-【記事内容】
-タイトル: ${article.translated_title || article.original_title}
-要約: ${article.summary}
+Topic: ${article.translated_title || article.original_title}
+Summary: ${article.summary}
 
-【制約事項】
-- 二人の会話として、記事の核心や興味深いポイントを自然な口調で解説してください。
-- 5〜10往復程度のやり取りにしてください。
-- 以下のJSONフォーマットで出力してください。他のテキストは含めないでください。
+Requirements:
+- MANDATORY: MUST be a back-and-forth conversation between ${charA.name} and ${charB.name}.
+- Length: approximately ${lengthStr}.
+- Tone: Natural and engaging Japanese.
+- Output MUST be a valid JSON array of objects.
 
-出力フォーマット:
+Output Format:
 [
-  {"speaker": "${charA.name}または${charB.name}", "text": "セリフ内容"},
+  {"speaker": "${charA.name}", "text": "..."},
+  {"speaker": "${charB.name}", "text": "..."},
   ...
 ]
 `;
@@ -117,10 +122,24 @@ export async function generateDialogue(article: any): Promise<any[] | null> {
       }
     );
 
-    const content = response.data.choices[0].message.content;
-    // Handle potential markdown wrapping
-    const jsonString = content.replace(/```json\n?|\n?```/g, '').trim();
-    return JSON.parse(jsonString);
+    let content = response.data.choices[0].message.content;
+    content = content.replace(/```json\n?|\n?```/g, '').trim();
+
+    let scripts: any;
+    try {
+      scripts = JSON.parse(content);
+    } catch (parseError) {
+      console.error('Initial JSON parse failed, trying fallback:', content);
+      const arrayMatch = content.match(/\[\s*\{.*\}\s*\]/s);
+      if (arrayMatch) {
+        scripts = JSON.parse(arrayMatch[0]);
+      } else {
+        throw parseError;
+      }
+    }
+
+    const arr = Array.isArray(scripts) ? scripts : (scripts.script || scripts.dialogue || []);
+    return arr.length > 0 ? arr : null;
   } catch (e) {
     console.error('Dialogue generation failed:', e);
     return null;

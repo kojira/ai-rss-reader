@@ -61,7 +61,12 @@ export async function crawlAllFeeds(): Promise<CrawledArticle[]> {
       }
 
       const tasks = feed.items.map(async (item) => {
-        if (!item.link || DAO.getArticleByUrl(item.link)) return;
+        if (!item.link) return;
+
+        const existing = DAO.getArticleByUrl(item.link);
+        if (existing && existing.content && existing.content.length > 200) {
+          return;
+        }
 
         try {
           const resolvedUrl = await resolveUrl(item.link);
@@ -69,7 +74,7 @@ export async function crawlAllFeeds(): Promise<CrawledArticle[]> {
           
           if (processed) {
             DAO.saveArticle({
-              url: processed.url,
+              url: item.link, // Keep the original RSS link as the unique key
               original_title: processed.title || item.title || 'Untitled',
               content: processed.content,
               image_url: processed.imageUrl || null,

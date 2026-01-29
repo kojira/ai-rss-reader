@@ -64,6 +64,7 @@ interface Source {
 
 export default function App() {
   const [articles, setArticles] = useState<Article[]>([]);
+  const [failedProcesses, setFailedProcesses] = useState<any[]>([]);
   const [config, setConfig] = useState<Config | null>(null);
   const [sources, setSources] = useState<Source[]>([]);
   const [characters, setCharacters] = useState<Character[]>([]);
@@ -90,31 +91,103 @@ export default function App() {
   const [ingestUrl, setIngestUrl] = useState('');
   const [ingesting, setIngesting] = useState(false);
 
-  const fetchData = async () => {
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingArticles, setLoadingArticles] = useState(false);
+  const ARTICLES_PER_PAGE = 12;
+
+  const fetchInitialData = async () => {
     try {
-      const [artRes, confRes, sourRes, statRes, charRes] = await Promise.all([
-        axios.get('/api/articles'), axios.get('/api/config'), axios.get('/api/sources'), axios.get('/api/status'), axios.get('/api/characters')
+      setLoadingArticles(true);
+      const [artRes, confRes, sourRes, statRes, charRes, errRes] = await Promise.all([
+        axios.get(`/api/articles?limit=${ARTICLES_PER_PAGE}&offset=0&keyword=${filterKeywords}&minScore=${filterThresholds.average}`), 
+        axios.get('/api/config'), 
+        axios.get('/api/sources'), 
+        axios.get('/api/status'), 
+        axios.get('/api/characters'),
+        axios.get('/api/articles/errors')
       ]);
-      setArticles(artRes.data); setConfig(confRes.data); setSources(sourRes.data); setStatus(statRes.data); setCharacters(charRes.data);
+      setArticles(artRes.data);
+      setHasMore(artRes.data.length === ARTICLES_PER_PAGE);
+      setConfig(confRes.data); 
+      setSources(sourRes.data); 
+      setStatus(statRes.data); 
+      setCharacters(charRes.data);
+      setFailedProcesses(errRes.data);
+      
       if (charRes.data.length >= 2) {
           const experts = charRes.data.filter((c: Character) => c.role === 'expert');
           const learners = charRes.data.filter((c: Character) => c.role === 'learner');
           if (!genCharA && experts.length > 0) setGenCharA(experts[0].id);
           if (!genCharB && learners.length > 0) setGenCharB(learners[0].id);
       }
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); } finally { setLoadingArticles(false); }
+  };
+
+  const loadMoreArticles = async () => {
+    if (loadingArticles || !hasMore) return;
+    setLoadingArticles(true);
+    try {
+      const res = await axios.get(`/api/articles?limit=${ARTICLES_PER_PAGE}&offset=${articles.length}&keyword=${filterKeywords}&minScore=${filterThresholds.average}`);
+      setArticles(prev => [...prev, ...res.data]);
+      setHasMore(res.data.length === ARTICLES_PER_PAGE);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingArticles(false);
+    }
   };
 
   const fetchScripts = async (articleId: number) => {
-    try { const res = await axios.get(`/api/articles/${articleId}/scripts`); setScripts(res.data); setSelectedScriptIndex(0); } catch (e) { console.error(e); }
+    try { 
+      const res = await axios.get(`/api/articles/${articleId}/scripts`); 
+      setScripts(res.data); 
+      // Ensure we don't try to access index out of bounds if new scripts are fewer
+      setSelectedScriptIndex(0); 
+    } catch (e) { console.error(e); }
   };
 
-  useEffect(() => { fetchData(); const interval = setInterval(fetchData, 8000); return () => clearInterval(interval); }, []);
-  useEffect(() => { if (selectedArticle) fetchScripts(selectedArticle.id); else setScripts([]); }, [selectedArticle]);
+  useEffect(() => { 
+    fetchInitialData(); 
+    const statusInterval = setInterval(async () => {
+      try {
+        const statRes = await axios.get('/api/status');
+        setStatus(statRes.data);
+      } catch (e) { console.error(e); }
+    }, 8000); 
+    return () => clearInterval(statusInterval); 
+  }, [filterKeywords, filterThresholds.average]);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries[0].isIntersecting && hasMore && !loadingArticles) {
+          loadMoreArticles();
+        }
+      },
+      { threshold: 1.0 }
+    );
+
+    const target = document.querySelector('#bottom-observer');
+    if (target) observer.observe(target);
+
+    return () => {
+      if (target) observer.unobserve(target);
+    };
+  }, [hasMore, loadingArticles, articles.length]);
+
+  useEffect(() => { 
+    if (selectedArticle) {
+      setSelectedScriptIndex(0);
+      fetchScripts(selectedArticle.id); 
+    } else {
+      setScripts([]); 
+      setSelectedScriptIndex(0); 
+    }
+  }, [selectedArticle]);
 
   const saveConfig = async () => { if (!config) return; await axios.post('/api/config', config); };
-  const triggerCrawl = async () => { setStatus(prev => ({ ...prev, isCrawling: true, currentTask: 'Starting...' })); await axios.post('/api/crawl'); fetchData(); };
-  const stopCrawl = async () => { await axios.delete('/api/crawl'); fetchData(); };
+  const triggerCrawl = async () => { setStatus(prev => ({ ...prev, isCrawling: true, currentTask: 'Starting...' })); await axios.post('/api/crawl'); };
+  const stopCrawl = async () => { await axios.delete('/api/crawl'); };
   const generateScript = async () => {
       if (!selectedArticle || !genCharA || !genCharB) return;
       setLoadingScript(true);
@@ -122,10 +195,10 @@ export default function App() {
       catch (e) { alert('Failed to generate script'); } finally { setLoadingScript(false); }
   };
 
-  const addOrUpdateCharacter = async () => { if (editCharId) await axios.put(`/api/characters/${editCharId}`, charForm); else await axios.post('/api/characters', charForm); setCharForm({ name: '', persona: '', avatar: '', role: 'expert' }); setEditCharId(null); fetchData(); };
-  const deleteChar = async (id: number) => { await axios.delete(`/api/characters/${id}`); fetchData(); };
-  const addSource = async () => { if (!newSourceUrl) return; await axios.post('/api/sources', { url: newSourceUrl, name: newSourceName }); setNewSourceUrl(''); setNewSourceName(''); fetchData(); };
-  const deleteSource = async (id: number) => { await axios.delete(`/api/sources/${id}`); fetchData(); };
+  const addOrUpdateCharacter = async () => { if (editCharId) await axios.put(`/api/characters/${editCharId}`, charForm); else await axios.post('/api/characters', charForm); setCharForm({ name: '', persona: '', avatar: '', role: 'expert' }); setEditCharId(null); fetchInitialData(); };
+  const deleteChar = async (id: number) => { await axios.delete(`/api/characters/${id}`); fetchInitialData(); };
+  const addSource = async () => { if (!newSourceUrl) return; await axios.post('/api/sources', { url: newSourceUrl, name: newSourceName }); setNewSourceUrl(''); setNewSourceName(''); fetchInitialData(); };
+  const deleteSource = async (id: number) => { await axios.delete(`/api/sources/${id}`); fetchInitialData(); };
 
   const ingestUrlAction = async () => {
     if (!ingestUrl) return;
@@ -134,7 +207,7 @@ export default function App() {
       const res = await axios.post('/api/articles/ingest', { url: ingestUrl });
       setIngestOpen(false);
       setIngestUrl('');
-      await fetchData();
+      await fetchInitialData();
       if (res.data.article) {
         setSelectedArticle(res.data.article);
       }
@@ -144,16 +217,22 @@ export default function App() {
       setIngesting(false);
     }
   };
+  const retryError = async (id: number) => { try { await axios.post(`/api/errors/${id}/retry`); fetchInitialData(); } catch (e) { alert('Failed to retry'); } };
+  const deleteError = async (id: number) => { try { await axios.delete(`/api/errors/${id}`); fetchInitialData(); } catch (e) { alert('Failed to delete error'); } };
   const shareToDiscord = async (articleId: number) => { setSharing(true); try { await axios.post(`/api/articles/${articleId}/share`); alert('Shared!'); } catch (e) { alert('Failed'); } finally { setSharing(false); } };
   const clearFilters = () => { setFilterKeywords(''); setFilterThresholds({ average: 0, novelty: 0, importance: 0, reliability: 0, context: 0, thinking: 0 }); };
 
   const filteredArticles = useMemo(() => {
     return articles.filter(a => {
+      // average_score and keyword are already filtered on backend in fetchInitialData
+      // but we still apply them here for safety or if the state is out of sync
       if (filterKeywords) {
         const kw = filterKeywords.toLowerCase();
         if (!(a.translated_title || a.original_title || '').toLowerCase().includes(kw) && !(a.summary || '').toLowerCase().includes(kw)) return false;
       }
       if ((a.average_score || 0) < filterThresholds.average) return false;
+      
+      // These are still local-only filtering (optional optimization)
       if ((a.score_novelty || 0) < filterThresholds.novelty) return false;
       if ((a.score_importance || 0) < filterThresholds.importance) return false;
       if ((a.score_reliability || 0) < filterThresholds.reliability) return false;
@@ -306,6 +385,18 @@ export default function App() {
             </Grid>
           ))}
         </Grid>
+        
+        <Box id="bottom-observer" sx={{ py: 4, display: 'flex', justifyContent: 'center' }}>
+          {loadingArticles && (
+            <Box sx={{ textAlign: 'center' }}>
+              <CircularProgress size={32} />
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>Loading more news...</Typography>
+            </Box>
+          )}
+          {!hasMore && articles.length > 0 && (
+            <Typography variant="body2" color="text.secondary">No more articles to load.</Typography>
+          )}
+        </Box>
       </Container>
 
       <Dialog open={!!selectedArticle} onClose={() => setSelectedArticle(null)} maxWidth="lg" fullWidth>
@@ -352,8 +443,19 @@ export default function App() {
                   <FormControl size="small" sx={{ minWidth: 100 }}><InputLabel>Length</InputLabel><Select value={scriptLength} label="Length" onChange={e => setScriptLength(e.target.value as any)}><MenuItem value="short">Short</MenuItem><MenuItem value="medium">Medium</MenuItem><MenuItem value="long">Long</MenuItem></Select></FormControl>
                   <Button variant="contained" size="small" onClick={generateScript} disabled={loadingScript || !genCharA || !genCharB}>{loadingScript ? <CircularProgress size={20} /> : 'Generate'}</Button>
                 </Box>
+                
+                {scripts.length > 0 && (
+                  <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+                    <Tabs value={selectedScriptIndex} onChange={(_, v) => setSelectedScriptIndex(v)} variant="scrollable" scrollButtons="auto">
+                      {scripts.map((_, i) => (
+                        <Tab key={i} label={`Version ${i + 1}`} />
+                      ))}
+                    </Tabs>
+                  </Box>
+                )}
+
                 <Box sx={{ flexGrow: 1, p: 3, overflowY: 'auto' }}>
-                  {scripts.length > 0 ? (<>{scripts[selectedScriptIndex].content.map((msg, i) => (<Box key={i} sx={{ display: 'flex', gap: 2, mb: 3, flexDirection: msg.speaker === 'B' ? 'row' : 'row-reverse' }}><Avatar src={(msg.speaker === 'A' ? scripts[selectedScriptIndex].charA.avatar : scripts[selectedScriptIndex].charB.avatar) || undefined} /><Paper sx={{ p: 2, maxWidth: '80%', bgcolor: msg.speaker === 'B' ? '#e3f2fd' : '#f5f5f5' }}><Typography variant="caption" fontWeight="bold" display="block">{msg.speaker === 'A' ? scripts[selectedScriptIndex].charA.name : scripts[selectedScriptIndex].charB.name}</Typography><Typography variant="body2">{msg.text}</Typography></Paper></Box>))}</>) : <Typography color="text.secondary" textAlign="center" mt={4}>Choose characters and click Generate!</Typography>}
+                  {scripts.length > 0 ? (<>{scripts[selectedScriptIndex]?.content.map((msg, i) => (<Box key={i} sx={{ display: 'flex', gap: 2, mb: 3, flexDirection: msg.speaker === 'B' ? 'row' : 'row-reverse' }}><Avatar src={(msg.speaker === 'A' ? scripts[selectedScriptIndex].charA.avatar : scripts[selectedScriptIndex].charB.avatar) || undefined} /><Paper sx={{ p: 2, maxWidth: '80%', bgcolor: msg.speaker === 'B' ? '#e3f2fd' : '#f5f5f5' }}><Typography variant="caption" fontWeight="bold" display="block">{msg.speaker === 'A' ? scripts[selectedScriptIndex].charA.name : scripts[selectedScriptIndex].charB.name}</Typography><Typography variant="body2">{msg.text}</Typography></Paper></Box>))}</>) : <Typography color="text.secondary" textAlign="center" mt={4}>Choose characters and click Generate!</Typography>}
                 </Box>
               </Grid>
             </Grid>
@@ -361,15 +463,33 @@ export default function App() {
         )}
       </Dialog>
 
-      <Dialog open={settingsOpen} onClose={() => { setSettingsOpen(false); saveConfig(); fetchData(); }} maxWidth="md" fullWidth>
+      <Dialog open={settingsOpen} onClose={() => { setSettingsOpen(false); saveConfig(); fetchInitialData(); }} maxWidth="md" fullWidth>
         <DialogTitle>Settings & Database</DialogTitle>
-        <Box sx={{ borderBottom: 1, borderColor: 'divider' }}><Tabs value={settingsTab} onChange={(_, v) => setSettingsTab(v)}><Tab label="General" /><Tab label="Characters" /><Tab label="RSS Sources" /></Tabs></Box>
+        <Box sx={{ borderBottom: 1, borderColor: 'divider' }}><Tabs value={settingsTab} onChange={(_, v) => setSettingsTab(v)}><Tab label="General" /><Tab label="Characters" /><Tab label="RSS Sources" /><Tab label="Failed Processes" /></Tabs></Box>
         <DialogContent sx={{ minHeight: '400px' }}>
           {settingsTab === 0 && <Box sx={{ py: 2 }}>{config && (<><TextField label="OpenRouter API Key" type="password" fullWidth sx={{ mb: 3 }} value={config.open_router_api_key || ''} onChange={e => setConfig({...config, open_router_api_key: e.target.value})} /><TextField label="Discord Webhook URL" fullWidth sx={{ mb: 3 }} value={config.discord_webhook_url || ''} onChange={e => setConfig({...config, discord_webhook_url: e.target.value})} /><TextField label="Threshold" type="number" fullWidth sx={{ mb: 2 }} inputProps={{ min: 0, max: 10, step: 0.1 }} value={config.score_threshold || 0} onChange={e => setConfig({...config, score_threshold: parseFloat(e.target.value)})} /></>)}</Box>}
           {settingsTab === 1 && <Box sx={{ py: 2 }}><Grid container spacing={2} sx={{ mb: 3 }}><Grid item xs={12} md={3}><TextField label="Name" fullWidth size="small" value={charForm.name} onChange={e => setCharForm({...charForm, name: e.target.value})} /></Grid><Grid item xs={12} md={4}><TextField label="Persona" fullWidth size="small" value={charForm.persona} onChange={e => setCharForm({...charForm, persona: e.target.value})} /></Grid><Grid item xs={12} md={3}><TextField label="Avatar URL" fullWidth size="small" value={charForm.avatar} onChange={e => setCharForm({...charForm, avatar: e.target.value})} /></Grid><Grid item xs={12} md={2}><Select fullWidth size="small" value={charForm.role} onChange={e => setCharForm({...charForm, role: e.target.value as any})}><MenuItem value="expert">Expert</MenuItem><MenuItem value="learner">Learner</MenuItem></Select></Grid><Grid item xs={12}><Button variant="contained" fullWidth startIcon={<PersonAdd />} onClick={addOrUpdateCharacter}>{editCharId ? 'Update' : 'Add'} Character</Button></Grid></Grid><List dense sx={{ bgcolor: '#f8f8f8', borderRadius: 1 }}>{characters.map(c => (<ListItem key={c.id} divider><Avatar src={c.avatar || undefined} sx={{ mr: 2 }} /><ListItemText primary={`${c.name} (${c.role})`} secondary={c.persona} /><ListItemSecondaryAction><IconButton size="small" onClick={() => { setEditCharId(c.id); setCharForm({ name: c.name, persona: c.persona, avatar: c.avatar || '', role: c.role }); }}><ChatBubbleOutline fontSize="small" /></IconButton><IconButton size="small" color="error" onClick={() => deleteChar(c.id)}><Delete fontSize="small" /></IconButton></ListItemSecondaryAction></ListItem>))}</List></Box>}
           {settingsTab === 2 && <Box sx={{ py: 2 }}><Grid container spacing={2} sx={{ mb: 3 }}><Grid item xs={12} md={5}><TextField label="Name" fullWidth size="small" value={newSourceName} onChange={e => setNewSourceName(e.target.value)} /></Grid><Grid item xs={12} md={5}><TextField label="URL" fullWidth size="small" value={newSourceUrl} onChange={e => setNewSourceUrl(e.target.value)} /></Grid><Grid item xs={12} md={2}><Button variant="contained" fullWidth startIcon={<Add />} onClick={addSource}>Add</Button></Grid></Grid><List dense sx={{ bgcolor: '#f8f8f8', borderRadius: 1 }}>{sources.map(s => (<ListItem key={s.id} divider><ListItemText primary={s.name} secondary={s.url} /><ListItemSecondaryAction><IconButton size="small" color="error" onClick={() => deleteSource(s.id)}><Delete fontSize="small" /></IconButton></ListItemSecondaryAction></ListItem>))}</List></Box>}
+          {settingsTab === 3 && (
+            <Box sx={{ py: 2 }}>
+              <List dense sx={{ bgcolor: '#fff0f0', borderRadius: 1 }}>
+                {failedProcesses.length > 0 ? failedProcesses.map(err => (
+                  <ListItem key={err.id} divider>
+                    <ListItemText 
+                      primary={err.url} 
+                      secondary={`${err.reason} (${new Date(err.timestamp).toLocaleString()})`} 
+                    />
+                    <ListItemSecondaryAction>
+                      <IconButton size="small" color="primary" onClick={() => retryError(err.id)} title="Retry"><Refresh fontSize="small" /></IconButton>
+                      <IconButton size="small" color="error" onClick={() => deleteError(err.id)} title="Delete"><Delete fontSize="small" /></IconButton>
+                    </ListItemSecondaryAction>
+                  </ListItem>
+                )) : <Typography sx={{ p: 2, textAlign: 'center' }}>No failed processes</Typography>}
+              </List>
+            </Box>
+          )}
         </DialogContent>
-        <Box sx={{ p: 2, textAlign: 'right' }}><Button onClick={() => { setSettingsOpen(false); saveConfig(); fetchData(); }} color="primary" variant="contained">Close & Save</Button></Box>
+        <Box sx={{ p: 2, textAlign: 'right' }}><Button onClick={() => { setSettingsOpen(false); saveConfig(); fetchInitialData(); }} color="primary" variant="contained">Close & Save</Button></Box>
       </Dialog>
       <Dialog open={errorOpen} onClose={() => setErrorOpen(false)} maxWidth="md" fullWidth><DialogTitle>Error</DialogTitle><DialogContent sx={{ bgcolor: '#fff0f0' }}><Typography variant="body2">{status.lastError}</Typography></DialogContent></Dialog>
       <Dialog open={filterOpen} onClose={() => setFilterOpen(false)} maxWidth="xs" fullWidth>

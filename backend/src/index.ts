@@ -12,33 +12,30 @@ const port = 3005;
 app.use(cors());
 app.use(express.json());
 
-// Articles
 app.get('/api/articles', (req, res) => {
-  res.json(DAO.getArticles(100));
+  const limit = parseInt(req.query.limit as string) || 20;
+  const offset = parseInt(req.query.offset as string) || 0;
+  const keyword = req.query.keyword as string;
+  const minScore = req.query.minScore ? parseFloat(req.query.minScore as string) : undefined;
+  res.json(DAO.getArticles(limit, offset, keyword || '', minScore || 0));
+});
+
+app.get('/api/articles/errors', (req, res) => {
+  res.json(DAO.getErrors());
 });
 
 app.post('/api/articles/ingest', async (req, res) => {
   const { url } = req.body;
-  if (!url) {
-    return res.status(400).json({ message: 'URL is required' });
-  }
-
+  if (!url) return res.status(400).json({ message: 'URL is required' });
   try {
-    // Check if exists
     const existing = DAO.getArticleByUrl(url);
     if (existing && existing.average_score !== null) {
       return res.json({ message: 'Article already exists', id: existing.id });
     }
-
-    // Process article fully
     const article = await fullyProcessAndSaveArticle(url);
-    if (!article) {
-      return res.status(500).json({ message: 'Failed to ingest article' });
-    }
-
-    res.json({ message: 'Article ingested', id: article.id, article });
+    if (!article) return res.status(500).json({ message: 'Failed to ingest' });
+    res.json({ message: 'Article ingested', id: (article as any).id, article });
   } catch (e: any) {
-    console.error('Ingestion failed:', e);
     res.status(500).json({ message: 'Ingestion failed', error: e.message });
   }
 });
@@ -47,182 +44,168 @@ app.post('/api/articles/:id/share', async (req, res) => {
   const articleId = parseInt(req.params.id);
   const article = DAO.getArticleById(articleId);
   const config = DAO.getConfig();
-
-  if (!article) {
-    return res.status(404).json({ message: 'Article not found' });
-  }
-
-  if (!config.discord_webhook_url) {
-    return res.status(400).json({ message: 'Discord webhook URL not configured' });
-  }
-
+  if (!article || !config.discord_webhook_url) return res.status(400).json({ message: 'Missing article or webhook' });
   try {
     const embed = {
       title: article.translated_title || article.original_title,
       url: article.url,
-      description: article.short_summary || article.summary || 'No summary available',
-      fields: [
-        {
-          name: 'Scores',
-          value: article.average_score 
-            ? `Avg: **${article.average_score.toFixed(2)}**\n(N:${article.score_novelty} I:${article.score_importance} R:${article.score_reliability} C:${article.score_context_value} T:${article.score_thought_provoking})`
-            : 'Not scored',
-          inline: true
-        }
-      ],
-      color: 0x0078d4, // A different color for manual share if desired
-      timestamp: new Date().toISOString(),
+      description: article.short_summary || article.summary || 'No summary',
+      fields: [{
+        name: 'Scores',
+        value: article.average_score 
+          ? `Avg: **${article.average_score.toFixed(2)}**\n(N:${article.score_novelty} I:${article.score_importance} R:${article.score_reliability} C:${article.score_context_value} T:${article.score_thought_provoking})`
+          : 'Not scored',
+        inline: true
+      }],
+      color: 0x0078d4,
       image: article.image_url ? { url: article.image_url } : undefined
     };
-
-    await axios.post(config.discord_webhook_url, {
-      embeds: [embed]
-    });
-    res.json({ message: 'Shared to Discord' });
+    await axios.post(config.discord_webhook_url, { embeds: [embed] });
+    res.json({ message: 'Shared' });
   } catch (e: any) {
-    console.error('Manual Discord share failed:', e);
-    res.status(500).json({ message: 'Failed to share to Discord', error: e.message });
+    res.status(500).json({ message: 'Failed to share', error: e.message });
   }
 });
 
-// Config
-app.get('/api/config', (req, res) => {
-  res.json(DAO.getConfig());
-});
+app.get('/api/config', (req, res) => res.json(DAO.getConfig()));
+app.post('/api/config', (req, res) => { DAO.updateConfig(req.body); res.json({ message: 'Updated' }); });
 
-app.post('/api/config', (req, res) => {
-  DAO.updateConfig(req.body);
-  res.json({ message: 'Config updated' });
-});
-
-// Characters
-app.get('/api/characters', (req, res) => {
-  res.json(DAO.getCharacters());
-});
-
+app.get('/api/characters', (req, res) => res.json(DAO.getCharacters()));
 app.post('/api/characters', (req, res) => {
-  const { name, persona, avatar, role } = req.body;
-  DAO.addCharacter(name, persona, avatar, role);
-  res.json({ message: 'Character added' });
+  DAO.addCharacter(req.body.name, req.body.persona, req.body.avatar, req.body.role);
+  res.json({ message: 'Added' });
 });
-
 app.put('/api/characters/:id', (req, res) => {
-  const { name, persona, avatar, role } = req.body;
-  DAO.updateCharacter(parseInt(req.params.id), name, persona, avatar, role);
-  res.json({ message: 'Character updated' });
+  DAO.updateCharacter(parseInt(req.params.id), req.body.name, req.body.persona, req.body.avatar, req.body.role);
+  res.json({ message: 'Updated' });
 });
-
 app.delete('/api/characters/:id', (req, res) => {
   DAO.deleteCharacter(parseInt(req.params.id));
-  res.json({ message: 'Character deleted' });
+  res.json({ message: 'Deleted' });
 });
 
-// Dialogue Scripts
 app.get('/api/articles/:id/scripts', (req, res) => {
-  const scripts = DAO.getScriptsForArticle(parseInt(req.params.id));
-  res.json(scripts.map(s => ({ 
-    ...s, 
-    content: JSON.parse(s.content_json),
+  res.json(DAO.getScriptsForArticle(parseInt(req.params.id)).map(s => ({
+    ...s,
+    content: JSON.parse(s.content_json || '[]'),
     charA: { name: s.char_a_name, avatar: s.char_a_avatar },
     charB: { name: s.char_b_name, avatar: s.char_b_avatar }
   })));
 });
 
 app.post('/api/articles/:id/scripts', async (req, res) => {
-  const articleId = parseInt(req.params.id);
+  const aid = parseInt(req.params.id);
   const { charAId, charBId } = req.body;
-  const article = DAO.getArticleById(articleId);
-  const config = DAO.getConfig();
-  const characters = DAO.getCharacters();
-  
-  const charA = characters.find(c => c.id === charAId);
-  const charB = characters.find(c => c.id === charBId);
-
-  if (!article || !config.open_router_api_key || !charA || !charB) {
-    return res.status(400).json({ message: 'Missing article, API key, or characters' });
-  }
-
+  const art = DAO.getArticleById(aid);
+  const cfg = DAO.getConfig();
+  const chars = DAO.getCharacters();
+  const cA = chars.find(c => c.id === charAId);
+  const cB = chars.find(c => c.id === charBId);
+  if (!art || !cfg.open_router_api_key || !cA || !cB) return res.status(400).json({ message: 'Missing data' });
   try {
-    const { length = 'medium' } = req.body;
-    
-    let lengthInstruction = "";
-    if (length === "short") {
-      lengthInstruction = "Make it very brief, approximately 4-6 lines in total. Provide a quick overview.";
-    } else if (length === "long") {
-      lengthInstruction = "Make it a deep dive, at least 20 lines long. Include multiple follow-up questions from the learner, detailed explanations from the expert, and an extensive discussion on the implications.";
-    } else {
-      lengthInstruction = "Make it a standard detailed explanation, approximately 10-15 lines long. Cover the main points and a couple of follow-up questions.";
-    }
+    const lengthMap: Record<string, string> = {
+      short: '5-8 lines',
+      medium: '10-15 lines',
+      long: '20-25 lines'
+    };
+    const lengthStr = lengthMap[req.body.length] || '10-15 lines';
 
-    const prompt = `
-      You are an AI script writer. Based on the following news article, create a dialogue script between two characters:
-      
-      Character A (Expert): Name="${charA.name}", Persona="${charA.persona}"
-      Character B (Learner): Name="${charB.name}", Persona="${charB.persona}"
-      
-      Length Requirement: ${lengthInstruction}
+    const prompt = `Create a dialogue script in Japanese between two characters:
+Character A: ${cA.name} (Persona: ${cA.persona})
+Character B: ${cB.name} (Persona: ${cB.persona})
 
-      Structure:
-      - B starts by asking a question about the news.
-      - A explains the key points.
-      - B asks follow-up or clarifying questions.
-      - A answers in detail but simply.
-      - They wrap up with a summary or opinion.
-      
-      Article Title: ${article.original_title}
-      Article Content: ${article.content}
-      
-      Output ONLY a JSON array of objects with "speaker" (either "A" or "B") and "text" (in Japanese).
-      Example: [{"speaker": "B", "text": "..."}, {"speaker": "A", "text": "..."}]
-    `;
+Topic: ${art.translated_title || art.original_title}
+Content: ${art.summary || (art.content || '').slice(0, 2000)}
+
+Requirements:
+- MANDATORY: MUST be a back-and-forth conversation between Character A and Character B.
+- Character A acts as the "speaker" value "A".
+- Character B acts as the "speaker" value "B".
+- Length: approximately ${lengthStr}.
+- Tone: Natural and engaging Japanese.
+- Output MUST be a valid JSON array of objects.
+
+Output Format:
+[
+  {"speaker": "A", "text": "Character A's response..."},
+  {"speaker": "B", "text": "Character B's response..."},
+  ...
+]`;
 
     const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
       model: 'google/gemini-2.0-flash-001',
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' }
     }, {
-      headers: { 'Authorization': `Bearer ${config.open_router_api_key}`, 'Content-Type': 'application/json' }
+      headers: { 'Authorization': `Bearer ${cfg.open_router_api_key}` }
     });
-
-    const content = response.data.choices[0].message.content;
-    let scriptArray = [];
+    
+    let content = response.data.choices[0].message.content;
+    // Basic cleanup of common LLM artifacts
+    content = content.replace(/```json\n?|\n?```/g, '').trim();
+    
+    let scripts: any;
     try {
-        const parsed = JSON.parse(content);
-        scriptArray = Array.isArray(parsed) ? parsed : (parsed.script || parsed.dialogue || []);
-    } catch (e) {
-        scriptArray = [];
+      scripts = JSON.parse(content);
+    } catch (parseError) {
+      console.error('Initial JSON parse failed, trying fallback:', content);
+      // Brute force attempt to find the array if it's wrapped in markers or text
+      const arrayMatch = content.match(/\[\s*\{.*\}\s*\]/s);
+      if (arrayMatch) {
+        scripts = JSON.parse(arrayMatch[0]);
+      } else {
+        throw parseError;
+      }
     }
 
-    if (scriptArray.length > 0) {
-      DAO.addScript(articleId, JSON.stringify(scriptArray), charAId, charBId);
-      res.json({ message: 'Script generated', script: scriptArray });
+    const arr = Array.isArray(scripts) ? scripts : (scripts.script || scripts.dialogue || []);
+    
+    if (arr.length > 0) {
+      DAO.addScript(aid, JSON.stringify(arr), charAId, charBId);
+      res.json({ message: 'Generated', script: arr });
     } else {
-      throw new Error('Failed to parse script JSON');
+      throw new Error('Empty script or invalid structure');
     }
   } catch (e: any) {
-    console.error(e);
+    console.error('Script generation error:', e);
     res.status(500).json({ message: 'Failed to generate script', error: e.message });
   }
 });
 
-// Sources (omitted for brevity in logic but fully implemented in DAO)
 app.get('/api/sources', (req, res) => res.json(DAO.getRssSources()));
-app.post('/api/sources', (req, res) => { DAO.addRssSource(req.body.url, req.body.name); res.json({ message: 'Source added' }); });
-app.delete('/api/sources/:id', (req, res) => { DAO.deleteRssSource(parseInt(req.params.id)); res.json({ message: 'Source deleted' }); });
+app.post('/api/sources', (req, res) => { DAO.addRssSource(req.body.url, req.body.name); res.json({ message: 'Added' }); });
+app.delete('/api/sources/:id', (req, res) => { DAO.deleteRssSource(parseInt(req.params.id)); res.json({ message: 'Deleted' }); });
 
-// Status & Controls
 app.get('/api/status', (req, res) => res.json(DAO.getCrawlerStatus()));
 app.post('/api/crawl', (req, res) => {
-  const status = DAO.getCrawlerStatus();
-  if (status.is_crawling === 1) return res.status(400).json({ message: 'Already crawling' });
-  const workerPath = path.join(__dirname, 'worker.ts');
-  exec(`npx ts-node ${workerPath}`, (error) => { if (error) DAO.updateCrawlerStatus({ last_error: error.message, is_crawling: 0 }); });
-  res.json({ message: 'Crawl started' });
+  if (DAO.getCrawlerStatus().is_crawling === 1) return res.status(400).json({ message: 'Busy' });
+  exec(`npx ts-node ${path.join(__dirname, 'worker.ts')}`, (err) => { if (err) DAO.updateCrawlerStatus({ last_error: err.message, is_crawling: 0 }); });
+  res.json({ message: 'Started' });
 });
 app.delete('/api/crawl', (req, res) => {
   exec("pkill -9 -f 'ts-node.*worker.ts'");
   DAO.updateCrawlerStatus({ is_crawling: 0, current_task: 'Stopped' });
-  res.json({ message: 'Crawl stopped' });
+  res.json({ message: 'Stopped' });
+});
+
+app.post('/api/articles/:id/retry', async (req, res) => {
+  const art = DAO.getArticleById(parseInt(req.params.id));
+  if (!art) return res.status(404).json({ message: 'Not found' });
+  const upd = await fullyProcessAndSaveArticle(art.url);
+  res.json({ message: upd ? 'Success' : 'Failed', article: upd });
+});
+
+app.post('/api/errors/:id/retry', async (req, res) => {
+  const err = DAO.getErrorById(parseInt(req.params.id));
+  if (!err) return res.status(404).json({ message: 'Not found' });
+  const upd = await fullyProcessAndSaveArticle(err.url);
+  res.json({ message: upd ? 'Success' : 'Failed', article: upd });
+});
+
+app.delete('/api/errors/:id', (req, res) => {
+  const err = DAO.getErrorById(parseInt(req.params.id));
+  if (err) DAO.clearError(err.url);
+  res.json({ message: 'Deleted' });
 });
 
 app.listen(port, () => console.log(`Backend API at http://localhost:${port}`));
