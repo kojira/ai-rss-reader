@@ -115,6 +115,7 @@ export default function App() {
 
   const [hasMore, setHasMore] = useState(true);
   const [loadingArticles, setLoadingArticles] = useState(false);
+  const [consecutiveErrors, setConsecutiveErrors] = useState(0);
   const ARTICLES_PER_PAGE = 12;
 
   const fetchInitialData = async () => {
@@ -141,6 +142,7 @@ export default function App() {
       }); 
       setCharacters(charRes.data);
       setFailedProcesses(errRes.data);
+      setConsecutiveErrors(0);
       
       if (charRes.data.length >= 2) {
           const experts = charRes.data.filter((c: Character) => c.role === 'expert');
@@ -148,7 +150,10 @@ export default function App() {
           if (!genCharA && experts.length > 0) setGenCharA(experts[0].id);
           if (!genCharB && learners.length > 0) setGenCharB(learners[0].id);
       }
-    } catch (e) { console.error(e); } finally { setLoadingArticles(false); }
+    } catch (e) { 
+      console.error(e);
+      setConsecutiveErrors(prev => prev + 1);
+    } finally { setLoadingArticles(false); }
   };
 
   const loadMoreArticles = async () => {
@@ -177,6 +182,10 @@ export default function App() {
   useEffect(() => { 
     fetchInitialData(); 
     const statusInterval = setInterval(async () => {
+      if (consecutiveErrors > 3) {
+        console.warn('Too many consecutive errors, stopping status polling.');
+        return;
+      }
       try {
         const statRes = await axios.get('/api/status');
         setStatus({
@@ -189,10 +198,14 @@ export default function App() {
         if (statRes.data.errors) {
           setFailedProcesses(statRes.data.errors);
         }
-      } catch (e) { console.error(e); }
+        setConsecutiveErrors(0);
+      } catch (e) { 
+        console.error(e); 
+        setConsecutiveErrors(prev => prev + 1);
+      }
     }, 8000); 
     return () => clearInterval(statusInterval); 
-  }, [filterKeywords, filterThresholds.average]);
+  }, [filterKeywords, filterThresholds.average, consecutiveErrors]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(

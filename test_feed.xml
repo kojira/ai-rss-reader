@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0">
+<channel>
+ <title>Test RSS Feed</title>
+ <description>A dummy RSS feed for testing the crawler.</description>
+ <link>http://localhost:3333/test-rss</link>
+ <lastBuildDate>Thu, 29 Jan 2026 09:29:37 GMT</lastBuildDate>
+ <pubDate>Thu, 29 Jan 2026 09:29:37 GMT</pubDate>
+ <item>
+  <title>Test Article 1</title>
+  <description>This is a test article content for the first item.</description>
+  <link>https://example.com/test-article-1</link>
+  <guid>https://example.com/test-article-1</guid>
+  <pubDate>Thu, 29 Jan 2026 09:29:37 GMT</pubDate>
+ </item>
+ <item>
+  <title>Test Article 2</title>
+  <description>Another test article for the crawler to process.</description>
+  <link>https://example.com/test-article-2</link>
+  <guid>https://example.com/test-article-2</guid>
+  <pubDate>Thu, 29 Jan 2026 09:29:37 GMT</pubDate>
+ </item>
+</channel>
+</rss>

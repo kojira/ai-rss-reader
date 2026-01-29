@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { DAO } from './lib/db';
+import { DAO } from './lib/db/index';
 import { spawn } from 'child_process';
 import path from 'path';
 import axios from 'axios';

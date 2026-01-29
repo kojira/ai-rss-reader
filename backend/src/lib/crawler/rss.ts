@@ -1,4 +1,5 @@
 import Parser from 'rss-parser';
+import * as fs from 'fs';
 import { chromium } from 'playwright';
 import { fetchFinalUrl, closeBrowser } from './browser';
 import { processArticle } from './article';
@@ -38,7 +39,12 @@ async function fetchRssContentWithBrowser(url: string): Promise<string> {
   const page = await browser.newPage();
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    const xml = await page.evaluate(() => document.querySelector('pre')?.textContent || document.body.innerText);
+    const xml = await page.evaluate(() => {
+	  const pre = document.querySelector('pre');
+	  if (pre) return pre.textContent || '';
+	  // XML direct view in some browsers might be in a different structure
+	  return document.documentElement.outerHTML || document.body.innerText;
+	});
     return xml;
   } finally {
     await browser.close();
@@ -53,11 +59,20 @@ export async function crawlAllFeeds(): Promise<CrawledArticle[]> {
     console.log(`Crawling source: ${source.name} (${source.url})`);
     try {
       let feed;
-      try {
-        feed = await parser.parseURL(source.url);
-      } catch (e) {
-        const xml = await fetchRssContentWithBrowser(source.url);
+      if (source.url.startsWith('file://')) {
+        const filePath = source.url.replace('file://', '');
+        const xml = fs.readFileSync(filePath, 'utf-8');
         feed = await parser.parseString(xml);
+      } else {
+        try {
+          console.log(`Attempting parseURL for ${source.url}`);
+          feed = await parser.parseURL(source.url);
+        } catch (e: any) {
+          console.log(`parseURL failed: ${e.message}. Falling back to fetchRssContentWithBrowser.`);
+          const xml = await fetchRssContentWithBrowser(source.url);
+          console.log(`Fetched XML (length: ${xml.length}): ${xml.slice(0, 50)}...`);
+          feed = await parser.parseString(xml);
+        }
       }
 
       const tasks = feed.items.map(async (item) => {
