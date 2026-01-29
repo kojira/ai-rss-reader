@@ -52,6 +52,8 @@ db.exec(`
     title_hint TEXT,
     error_message TEXT,
     stack_trace TEXT,
+    phase TEXT,
+    context TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -61,7 +63,8 @@ db.exec(`
     last_run DATETIME,
     current_task TEXT,
     articles_processed INTEGER DEFAULT 0,
-    last_error TEXT
+    last_error TEXT,
+    worker_pid INTEGER
   );
 
   CREATE TABLE IF NOT EXISTS scripts (
@@ -97,6 +100,17 @@ try {
         if (!columns.some(c => c.name === col)) {
             db.exec(`ALTER TABLE articles ADD COLUMN ${col} REAL`);
         }
+    }
+    const errorColumns = db.prepare("PRAGMA table_info(article_errors)").all() as any[];
+    if (!errorColumns.some(c => c.name === 'phase')) {
+        db.exec("ALTER TABLE article_errors ADD COLUMN phase TEXT");
+    }
+    if (!errorColumns.some(c => c.name === 'context')) {
+        db.exec("ALTER TABLE article_errors ADD COLUMN context TEXT");
+    }
+    const statusColumns = db.prepare("PRAGMA table_info(crawler_status)").all() as any[];
+    if (!statusColumns.some(c => c.name === 'worker_pid')) {
+        db.exec("ALTER TABLE crawler_status ADD COLUMN worker_pid INTEGER");
     }
 } catch (e) {}
 
@@ -142,6 +156,8 @@ export interface ArticleError {
   title_hint: string | null;
   error_message: string;
   stack_trace: string | null;
+  phase: string | null;
+  context: string | null;
   created_at: string;
 }
 
@@ -151,8 +167,18 @@ export class DAO {
   }
   static updateCrawlerStatus(status: any) {
     const current = this.getCrawlerStatus();
-    const updated = { ...current, ...status };
-    db.prepare(`UPDATE crawler_status SET is_crawling = ?, last_run = ?, current_task = ?, articles_processed = ?, last_error = ? WHERE id = 1`).run(updated.is_crawling, updated.last_run, updated.current_task, updated.articles_processed, updated.last_error);
+    // Only update fields provided in the status object, keeping others intact
+    const updated = { 
+      is_crawling: status.is_crawling !== undefined ? status.is_crawling : current.is_crawling,
+      last_run: status.last_run !== undefined ? status.last_run : current.last_run,
+      current_task: status.current_task !== undefined ? status.current_task : current.current_task,
+      articles_processed: status.articles_processed !== undefined ? status.articles_processed : current.articles_processed,
+      last_error: status.last_error !== undefined ? status.last_error : current.last_error,
+      worker_pid: status.worker_pid !== undefined ? status.worker_pid : current.worker_pid
+    };
+    
+    db.prepare(`UPDATE crawler_status SET is_crawling = ?, last_run = ?, current_task = ?, articles_processed = ?, last_error = ?, worker_pid = ? WHERE id = 1`)
+      .run(updated.is_crawling, updated.last_run, updated.current_task, updated.articles_processed, updated.last_error, updated.worker_pid);
   }
   static getConfig(): Config {
     return db.prepare('SELECT * FROM configs WHERE id = 1').get() as Config;
@@ -191,8 +217,8 @@ export class DAO {
     const updates = keys.filter(k => k !== 'url').map(k => `${k}=excluded.${k}`).join(', ');
     return db.prepare(`INSERT INTO articles (${columns}) VALUES (${placeholders}) ON CONFLICT(url) DO UPDATE SET ${updates}`).run(...values);
   }
-  static logError(url: string, errorMsg: string, stackTrace: string | null, titleHint?: string) {
-    db.prepare('INSERT OR REPLACE INTO article_errors (url, title_hint, error_message, stack_trace) VALUES (?, ?, ?, ?)').run(url, titleHint || '', errorMsg, stackTrace);
+  static logError(url: string, errorMsg: string, stackTrace: string | null, titleHint?: string, phase?: string, context?: string) {
+    db.prepare('INSERT OR REPLACE INTO article_errors (url, title_hint, error_message, stack_trace, phase, context) VALUES (?, ?, ?, ?, ?, ?)').run(url, titleHint || '', errorMsg, stackTrace, phase || null, context || null);
   }
   static getErrors(): ArticleError[] {
     return db.prepare('SELECT * FROM article_errors ORDER BY created_at DESC LIMIT 50').all() as ArticleError[];
@@ -229,5 +255,11 @@ export class DAO {
   }
   static addScript(aid: number, json: string, caid: number, cbid: number) {
     return db.prepare('INSERT INTO scripts (article_id, content_json, char_a_id, char_b_id) VALUES (?, ?, ?, ?)').run(aid, json, caid, cbid);
+  }
+  static getUnprocessedArticles(limit = 10): Article[] {
+    return db.prepare('SELECT * FROM articles WHERE average_score IS NULL OR length(content) < 200 ORDER BY created_at DESC LIMIT ?').all(limit) as Article[];
+  }
+  static getArticlesWithoutImages(limit = 100): Article[] {
+    return db.prepare('SELECT * FROM articles WHERE image_url IS NULL OR image_url = \'\' ORDER BY created_at DESC LIMIT ?').all(limit) as Article[];
   }
 }

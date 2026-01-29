@@ -62,10 +62,22 @@ interface Source {
   name: string;
 }
 
+interface ArticleError {
+  id: number;
+  url: string;
+  title_hint: string | null;
+  error_message: string;
+  stack_trace: string | null;
+  phase: string | null;
+  context: string | null;
+  created_at: string;
+}
+
 export default function App() {
   const [articles, setArticles] = useState<Article[]>([]);
-  const [failedProcesses, setFailedProcesses] = useState<any[]>([]);
+  const [failedProcesses, setFailedProcesses] = useState<ArticleError[]>([]);
   const [config, setConfig] = useState<Config | null>(null);
+  const [expandedError, setExpandedError] = useState<number | null>(null);
   const [sources, setSources] = useState<Source[]>([]);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [status, setStatus] = useState<CrawlerStatus>({ isCrawling: false, lastRun: null, currentTask: null, articlesProcessed: 0, lastError: null });
@@ -110,7 +122,13 @@ export default function App() {
       setHasMore(artRes.data.length === ARTICLES_PER_PAGE);
       setConfig(confRes.data); 
       setSources(sourRes.data); 
-      setStatus(statRes.data); 
+      setStatus({
+        ...statRes.data,
+        isCrawling: statRes.data.is_crawling === 1,
+        currentTask: statRes.data.current_task,
+        articlesProcessed: statRes.data.articles_processed,
+        lastError: statRes.data.last_error
+      }); 
       setCharacters(charRes.data);
       setFailedProcesses(errRes.data);
       
@@ -151,7 +169,16 @@ export default function App() {
     const statusInterval = setInterval(async () => {
       try {
         const statRes = await axios.get('/api/status');
-        setStatus(statRes.data);
+        setStatus({
+          ...statRes.data,
+          isCrawling: statRes.data.is_crawling === 1,
+          currentTask: statRes.data.current_task,
+          articlesProcessed: statRes.data.articles_processed,
+          lastError: statRes.data.last_error
+        });
+        if (statRes.data.errors) {
+          setFailedProcesses(statRes.data.errors);
+        }
       } catch (e) { console.error(e); }
     }, 8000); 
     return () => clearInterval(statusInterval); 
@@ -474,16 +501,63 @@ export default function App() {
             <Box sx={{ py: 2 }}>
               <List dense sx={{ bgcolor: '#fff0f0', borderRadius: 1 }}>
                 {failedProcesses.length > 0 ? failedProcesses.map(err => (
-                  <ListItem key={err.id} divider>
-                    <ListItemText 
-                      primary={err.url} 
-                      secondary={`${err.reason} (${new Date(err.timestamp).toLocaleString()})`} 
-                    />
-                    <ListItemSecondaryAction>
-                      <IconButton size="small" color="primary" onClick={() => retryError(err.id)} title="Retry"><Refresh fontSize="small" /></IconButton>
-                      <IconButton size="small" color="error" onClick={() => deleteError(err.id)} title="Delete"><Delete fontSize="small" /></IconButton>
-                    </ListItemSecondaryAction>
-                  </ListItem>
+                  <React.Fragment key={err.id}>
+                    <ListItem 
+                      divider 
+                      sx={{ cursor: 'pointer', '&:hover': { bgcolor: '#ffebeb' } }}
+                      onClick={() => setExpandedError(expandedError === err.id ? null : err.id)}
+                    >
+                      <ListItemText 
+                        primary={
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                            {err.phase && (
+                              <Chip 
+                                label={err.phase} 
+                                size="small" 
+                                color={err.phase === 'CRAWL' ? 'warning' : err.phase === 'EVAL' ? 'secondary' : 'default'} 
+                                sx={{ height: 20, fontSize: '0.65rem', fontWeight: 'bold' }}
+                              />
+                            )}
+                            <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
+                              {err.error_message}
+                            </Typography>
+                          </Box>
+                        } 
+                        secondary={
+                          <Box component="span">
+                            {err.context && <Typography variant="caption" display="block" color="text.primary" sx={{ fontStyle: 'italic', mb: 0.5 }}>{err.context}</Typography>}
+                            <Typography 
+                              variant="caption" 
+                              component="a" 
+                              href={err.url} 
+                              target="_blank" 
+                              rel="noopener noreferrer" 
+                              onClick={(e) => e.stopPropagation()}
+                              color="primary" 
+                              sx={{ display: 'block', textDecoration: 'none', '&:hover': { textDecoration: 'underline' }, mb: 0.5 }}
+                            >
+                              {err.url}
+                            </Typography>
+                            <Typography variant="caption" display="block" color="text.secondary">
+                              {new Date(err.created_at).toLocaleString()}
+                            </Typography>
+                          </Box>
+                        } 
+                      />
+                      <ListItemSecondaryAction>
+                        <IconButton size="small" color="primary" onClick={(e) => { e.stopPropagation(); retryError(err.id); }} title="Retry"><Refresh fontSize="small" /></IconButton>
+                        <IconButton size="small" color="error" onClick={(e) => { e.stopPropagation(); deleteError(err.id); }} title="Delete"><Delete fontSize="small" /></IconButton>
+                      </ListItemSecondaryAction>
+                    </ListItem>
+                    {expandedError === err.id && (
+                      <Box sx={{ p: 2, bgcolor: '#333', color: '#fff', fontSize: '0.75rem', overflowX: 'auto', borderRadius: '0 0 4px 4px' }}>
+                        <Typography variant="caption" display="block" sx={{ opacity: 0.7, mb: 1 }}>Raw Stack Trace:</Typography>
+                        <Box component="pre" sx={{ m: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                          {err.stack_trace || 'No stack trace available'}
+                        </Box>
+                      </Box>
+                    )}
+                  </React.Fragment>
                 )) : <Typography sx={{ p: 2, textAlign: 'center' }}>No failed processes</Typography>}
               </List>
             </Box>

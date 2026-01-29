@@ -2,11 +2,10 @@ import axios from 'axios';
 import { CrawledArticle, EvaluationResult } from '../types';
 import { DAO } from '../db/index';
 
-export async function evaluateArticle(article: CrawledArticle): Promise<EvaluationResult | null> {
+export async function evaluateArticle(article: CrawledArticle): Promise<EvaluationResult> {
   const config = DAO.getConfig();
   if (!config.open_router_api_key) {
-    console.error('OpenRouter API Key is missing');
-    return null;
+    throw new Error('OpenRouter API Key is missing');
   }
 
   const prompt = `
@@ -49,11 +48,20 @@ export async function evaluateArticle(article: CrawledArticle): Promise<Evaluati
         headers: {
           'Authorization': `Bearer ${config.open_router_api_key}`,
           'Content-Type': 'application/json'
-        }
+        },
+        timeout: 30000
       }
     );
 
+    if (!response.data?.choices?.[0]?.message?.content) {
+      throw new Error(`LLM response structure invalid: ${JSON.stringify(response.data)}`);
+    }
+
     const result = JSON.parse(response.data.choices[0].message.content);
+    if (!result.scores || typeof result.scores.novelty !== 'number') {
+      throw new Error(`LLM returned invalid result structure: ${response.data.choices[0].message.content}`);
+    }
+
     const scores = result.scores;
     const averageScore = (scores.novelty + scores.importance + scores.reliability + scores.contextValue + scores.thoughtProvoking) / 5;
 
@@ -61,9 +69,9 @@ export async function evaluateArticle(article: CrawledArticle): Promise<Evaluati
       ...result,
       averageScore
     };
-  } catch (e) {
-    console.error('LLM Evaluation failed:', e);
-    return null;
+  } catch (e: any) {
+    console.error('LLM Evaluation failed:', e.message);
+    throw e;
   }
 }
 

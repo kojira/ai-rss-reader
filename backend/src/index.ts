@@ -1,13 +1,15 @@
 import express from 'express';
 import cors from 'cors';
 import { DAO } from './lib/db';
-import { exec } from 'child_process';
+import { spawn } from 'child_process';
 import path from 'path';
 import axios from 'axios';
 import { fullyProcessAndSaveArticle } from './lib/crawler/article';
 
 const app = express();
 const port = 3005;
+
+let currentWorker: any = null;
 
 app.use(cors());
 app.use(express.json());
@@ -176,15 +178,59 @@ app.get('/api/sources', (req, res) => res.json(DAO.getRssSources()));
 app.post('/api/sources', (req, res) => { DAO.addRssSource(req.body.url, req.body.name); res.json({ message: 'Added' }); });
 app.delete('/api/sources/:id', (req, res) => { DAO.deleteRssSource(parseInt(req.params.id)); res.json({ message: 'Deleted' }); });
 
-app.get('/api/status', (req, res) => res.json(DAO.getCrawlerStatus()));
-app.post('/api/crawl', (req, res) => {
-  if (DAO.getCrawlerStatus().is_crawling === 1) return res.status(400).json({ message: 'Busy' });
-  exec(`npx ts-node ${path.join(__dirname, 'worker.ts')}`, (err) => { if (err) DAO.updateCrawlerStatus({ last_error: err.message, is_crawling: 0 }); });
-  res.json({ message: 'Started' });
+app.get('/api/status', (req, res) => {
+  const status = DAO.getCrawlerStatus();
+  const errors = DAO.getErrors();
+  res.json({ ...status, errors });
 });
+
+app.post('/api/crawl', (req, res) => {
+  const status = DAO.getCrawlerStatus();
+  if (status.is_crawling === 1 && status.worker_pid) {
+    try {
+      process.kill(status.worker_pid, 0); // Check if process exists
+      return res.status(400).json({ message: 'A crawl is already in progress' });
+    } catch (e) {
+      // Process doesn't actually exist despite DB state, continue
+      DAO.updateCrawlerStatus({ is_crawling: 0, worker_pid: null });
+    }
+  }
+
+  const workerPath = path.join(__dirname, 'worker.ts');
+  console.log(`Spawning worker at: ${workerPath}`);
+  const child = spawn('npx', ['ts-node', workerPath], {
+    detached: true,
+    stdio: 'ignore'
+  });
+
+  child.unref();
+  
+  if (child.pid) {
+    DAO.updateCrawlerStatus({ 
+      is_crawling: 1, 
+      worker_pid: child.pid,
+      current_task: 'Initializing worker...',
+      articles_processed: 0,
+      last_error: null
+    });
+    currentWorker = child;
+    res.json({ message: 'Started', pid: child.pid });
+  } else {
+    res.status(500).json({ message: 'Failed to spawn worker' });
+  }
+});
+
 app.delete('/api/crawl', (req, res) => {
-  exec("pkill -9 -f 'ts-node.*worker.ts'");
-  DAO.updateCrawlerStatus({ is_crawling: 0, current_task: 'Stopped' });
+  const status = DAO.getCrawlerStatus();
+  if (status.worker_pid) {
+    try {
+      // Use negative PID to kill the whole process group since it was detached
+      process.kill(-status.worker_pid, 'SIGTERM');
+    } catch (e) {
+      try { process.kill(status.worker_pid, 'SIGTERM'); } catch (e2) {}
+    }
+  }
+  DAO.updateCrawlerStatus({ is_crawling: 0, current_task: 'Stopped', worker_pid: null });
   res.json({ message: 'Stopped' });
 });
 
@@ -208,4 +254,22 @@ app.delete('/api/errors/:id', (req, res) => {
   res.json({ message: 'Deleted' });
 });
 
-app.listen(port, () => console.log(`Backend API at http://localhost:${port}`));
+const server = app.listen(port, () => console.log(`Backend API at http://localhost:${port}`));
+
+const gracefulShutdown = () => {
+  console.log('Shutting down gracefully...');
+  const status = DAO.getCrawlerStatus();
+  if (status.worker_pid) {
+    console.log(`Killing worker PID: ${status.worker_pid}`);
+    try { process.kill(-status.worker_pid, 'SIGTERM'); } catch (e) {
+      try { process.kill(status.worker_pid, 'SIGTERM'); } catch (e2) {}
+    }
+  }
+  server.close(() => {
+    console.log('Server closed.');
+    process.exit(0);
+  });
+};
+
+process.on('SIGINT', gracefulShutdown);
+process.on('SIGTERM', gracefulShutdown);

@@ -72,18 +72,16 @@ export async function crawlAllFeeds(): Promise<CrawledArticle[]> {
           const resolvedUrl = await resolveUrl(item.link);
           const processed = await processArticle(resolvedUrl);
           
-          if (processed) {
-            DAO.saveArticle({
-              url: item.link, // Keep the original RSS link as the unique key
-              original_title: processed.title || item.title || 'Untitled',
-              content: processed.content,
-              image_url: processed.imageUrl || null,
-              // scores and summary left null/empty for now
-            });
-            return true;
-          }
-        } catch (e) {
-          console.error(`Error processing item ${item.link}:`, e);
+          DAO.saveArticle({
+            url: item.link, 
+            original_title: processed.title,
+            content: processed.content,
+            image_url: processed.imageUrl || null,
+          });
+          return true;
+        } catch (e: any) {
+          console.error(`Error processing item ${item.link}:`, e.message);
+          DAO.logError(item.link, e.message, e.stack, item.title || 'Untitled');
         }
         return false;
       });

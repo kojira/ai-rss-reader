@@ -21,8 +21,11 @@ export async function processArticle(url: string) {
     });
 
     if (response.status === 404) {
-      console.error(`Article not found: ${url}`);
-      return null;
+      throw new Error(`Article not found (404): ${url}`);
+    }
+
+    if (response.status >= 400) {
+      throw new Error(`Failed to fetch article: ${response.status} ${url}`);
     }
 
     const contentType = response.headers['content-type'] || '';
@@ -31,79 +34,91 @@ export async function processArticle(url: string) {
     const buffer = Buffer.from(response.data);
 
     if (isPdf) {
-      try {
-        const data = await pdf(buffer);
-        let title = data.info?.Title || '';
-        if (!title || title === 'Untitled' || title.trim() === '') {
-          // Fallback to filename
-          try {
-            const parsedUrl = new URL(url);
-            title = path.basename(parsedUrl.pathname);
-          } catch {
-            title = 'PDF Document';
-          }
-        }
-
-        return {
-          title: title,
-          content: data.text?.trim() || '',
-          imageUrl: '',
-          url: (response.request?.res?.responseUrl as string) || url,
-        };
-      } catch (pdfErr) {
-        console.error(`Error parsing PDF ${url}:`, pdfErr);
-        return null;
+      const data = await pdf(buffer);
+      if (!data.text || data.text.trim().length === 0) {
+        throw new Error(`PDF contains no extractable text: ${url}`);
       }
+
+      let title = data.info?.Title || '';
+      if (!title || title === 'Untitled' || title.trim() === '') {
+        try {
+          const parsedUrl = new URL(url);
+          title = path.basename(parsedUrl.pathname);
+        } catch {
+          title = '';
+        }
+      }
+
+      if (!title) {
+        throw new Error(`Could not determine title for PDF: ${url}`);
+      }
+
+      return {
+        title: title,
+        content: data.text.trim(),
+        imageUrl: '',
+        url: (response.request?.res?.responseUrl as string) || url,
+      };
     }
 
-    const decoder = new TextDecoder('utf-8'); // Simplified for now
+    const decoder = new TextDecoder('utf-8');
     const html = decoder.decode(buffer);
 
     const dom = new JSDOM(html, { url });
     const reader = new Readability(dom.window.document);
     const article = reader.parse();
 
+    if (!article || !article.title || !article.textContent || article.textContent.trim().length < 50) {
+      throw new Error(`Readability failed to extract valid content from ${url}`);
+    }
+
     const imageUrl = dom.window.document.querySelector('meta[property="og:image"]')?.getAttribute('content') ||
                      dom.window.document.querySelector('meta[name="twitter:image"]')?.getAttribute('content');
 
     return {
-      title: article?.title || '',
-      content: article?.textContent?.trim() || '',
+      title: article.title,
+      content: article.textContent.trim(),
       imageUrl: imageUrl || '',
       url: (response.request?.res?.responseUrl as string) || url,
     };
-  } catch (e) {
-    console.error(`Error processing article ${url}:`, e);
-    return null;
+  } catch (e: any) {
+    console.error(`Error processing article ${url}:`, e.message);
+    throw e;
   }
 }
 
 export async function fullyProcessAndSaveArticle(url: string) {
-  // 1. Crawl
-  const processed = await processArticle(url);
-  if (!processed) return null;
+  let currentPhase = 'CRAWL';
+  let currentContext = 'Fetching and parsing article content';
+  try {
+    // 1. Crawl
+    const processed = await processArticle(url);
 
-  // 2. Save Initial
-  DAO.saveArticle({
-    url: processed.url,
-    original_title: processed.title,
-    content: processed.content,
-    image_url: processed.imageUrl,
-  });
+    // 2. Save Initial
+    DAO.saveArticle({
+      url: processed.url,
+      original_title: processed.title,
+      content: processed.content,
+      image_url: processed.imageUrl,
+    });
 
-  // 3. Evaluate
-  const articleObj: CrawledArticle = {
-    url: processed.url,
-    title: processed.title,
-    content: processed.content,
-    originalUrl: url,
-    pubDate: new Date().toISOString(),
-    imageUrl: processed.imageUrl
-  };
+    // 3. Evaluate
+    currentPhase = 'EVAL';
+    currentContext = 'Analyzing content with AI';
+    const articleObj: CrawledArticle = {
+      url: processed.url,
+      title: processed.title,
+      content: processed.content,
+      originalUrl: url,
+      pubDate: new Date().toISOString(),
+      imageUrl: processed.imageUrl
+    };
 
-  const evaluation = await evaluateArticle(articleObj);
+    const evaluation = await evaluateArticle(articleObj);
+    if (!evaluation) {
+      throw new Error('LLM Evaluation returned null or failed silently');
+    }
 
-  if (evaluation) {
     // 4. Update with Scores
     DAO.saveArticle({
       url: processed.url,
@@ -119,8 +134,29 @@ export async function fullyProcessAndSaveArticle(url: string) {
     });
 
     // 5. Notify
-    await sendDiscordNotification(articleObj, evaluation);
-  }
+    currentPhase = 'NOTIFY';
+    currentContext = 'Sending Discord notification';
+    await sendDiscordNotification(articleObj, evaluation).catch(e => console.error('Discord error:', e));
+    
+    // 6. Clear error if it succeeded
+    DAO.clearError(url);
 
-  return DAO.getArticleByUrl(processed.url);
+    return DAO.getArticleByUrl(processed.url);
+  } catch (e: any) {
+    console.error(`Error in fullyProcessAndSaveArticle for ${url}:`, e.message);
+    
+    let humanMessage = e.message;
+    if (e.code === 'ECONNABORTED' || e.message.includes('timeout')) {
+      humanMessage = 'Failed to reach source (Timeout)';
+    } else if (e.response?.status === 404) {
+      humanMessage = 'Article not found (404)';
+    } else if (e.message.includes('invalid JSON') || e.message.includes('LLM Evaluation')) {
+      humanMessage = 'AI returned invalid analysis data';
+    } else if (e.message.includes('Readability failed')) {
+      humanMessage = 'Could not extract readable text from page';
+    }
+
+    DAO.logError(url, humanMessage, e.stack, '', currentPhase, currentContext);
+    throw e;
+  }
 }
