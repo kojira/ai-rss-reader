@@ -5,8 +5,18 @@ import { fetchFinalUrl, closeBrowser } from './browser';
 import { processArticle } from './article';
 import { DAO } from '../db/index';
 import { CrawledArticle } from '../types';
+import { QueuedArticle } from './domain-queue';
 
 const parser = new Parser();
+
+export interface CollectedArticle {
+  url: string;           // Original URL (e.g., Google News)
+  resolvedUrl: string;   // Actual target URL
+  pubDate?: string;
+  feedSourceName: string;
+  feedSourceId: number;
+  title?: string;
+}
 
 export function isGoogleNewsUrl(url: string): boolean {
   return url.includes('news.google.com/rss/articles/');
@@ -51,6 +61,132 @@ async function fetchRssContentWithBrowser(url: string): Promise<string> {
   }
 }
 
+/**
+ * Collect article URLs from a single feed (no processing, just URL collection)
+ */
+async function collectFeedUrls(source: { id: number; url: string; name: string }): Promise<CollectedArticle[]> {
+  const articles: CollectedArticle[] = [];
+
+  try {
+    let feed;
+    if (source.url.startsWith('file://')) {
+      const filePath = source.url.replace('file://', '');
+      const xml = fs.readFileSync(filePath, 'utf-8');
+      feed = await parser.parseString(xml);
+    } else {
+      try {
+        feed = await parser.parseURL(source.url);
+      } catch (e: any) {
+        console.log(`parseURL failed for ${source.name}: ${e.message}. Trying browser fallback.`);
+        const xml = await fetchRssContentWithBrowser(source.url);
+        feed = await parser.parseString(xml);
+      }
+    }
+
+    // Resolve URLs in parallel (for Google News redirect resolution)
+    const resolvePromises = feed.items
+      .filter(item => item.link)
+      .map(async (item) => {
+        // Skip if already fully processed
+        const existing = DAO.getArticleByUrl(item.link!);
+        if (existing?.content && existing.content.length > 200 && existing.average_score !== null) {
+          return null;
+        }
+
+        try {
+          const resolvedUrl = await resolveUrl(item.link!);
+          return {
+            url: item.link!,
+            resolvedUrl,
+            pubDate: item.pubDate,
+            feedSourceName: source.name,
+            feedSourceId: source.id,
+            title: item.title,
+          };
+        } catch (e: any) {
+          console.error(`Failed to resolve URL ${item.link}:`, e.message);
+          return null;
+        }
+      });
+
+    // Process URL resolution with limited concurrency
+    for (let i = 0; i < resolvePromises.length; i += 5) {
+      const batch = resolvePromises.slice(i, i + 5);
+      const results = await Promise.all(batch);
+      for (const result of results) {
+        if (result) articles.push(result);
+      }
+    }
+  } catch (e: any) {
+    const isKnownError = e.message?.includes('Timeout') || e.name === 'TimeoutError';
+    if (isKnownError) {
+      console.error(`Failed to collect from ${source.name}: ${e.message}`);
+    } else {
+      // Import formatError from article.ts or inline it
+      const errorMsg = e.isAxiosError ? `${e.message}${e.cause?.message ? ` [${e.cause.message}]` : ''}` : (e.message || String(e));
+      console.error(`Failed to collect from ${source.name}: ${errorMsg}`);
+    }
+  }
+
+  return articles;
+}
+
+/**
+ * Collect article URLs from all RSS feeds in parallel
+ * Returns deduplicated list of articles with resolved URLs
+ */
+export async function collectAllArticleUrls(concurrency: number = 5): Promise<CollectedArticle[]> {
+  const sources = DAO.getRssSources();
+  const allArticles: CollectedArticle[] = [];
+
+  console.log(`Collecting URLs from ${sources.length} RSS sources (concurrency: ${concurrency})...`);
+
+  // Process feeds in parallel batches
+  for (let i = 0; i < sources.length; i += concurrency) {
+    const batch = sources.slice(i, i + concurrency);
+    const results = await Promise.allSettled(
+      batch.map(source => {
+        console.log(`  Fetching: ${source.name}`);
+        return collectFeedUrls(source);
+      })
+    );
+
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        allArticles.push(...result.value);
+      }
+    }
+  }
+
+  // Deduplicate by resolved URL (actual target domain)
+  const seen = new Set<string>();
+  const unique = allArticles.filter(a => {
+    const key = a.resolvedUrl || a.url;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  console.log(`Collected ${unique.length} unique article URLs from ${sources.length} feeds`);
+  return unique;
+}
+
+/**
+ * Convert CollectedArticle to QueuedArticle for domain queue
+ */
+export function toQueuedArticles(articles: CollectedArticle[]): QueuedArticle[] {
+  return articles.map(a => ({
+    url: a.url,
+    resolvedUrl: a.resolvedUrl,
+    pubDate: a.pubDate,
+    feedSourceName: a.feedSourceName,
+    title: a.title,
+  }));
+}
+
+/**
+ * @deprecated Use collectAllArticleUrls() with DomainQueueManager instead
+ */
 export async function crawlAllFeeds(): Promise<CrawledArticle[]> {
   const sources = DAO.getRssSources();
   const allArticles: CrawledArticle[] = [];
@@ -111,7 +247,8 @@ export async function crawlAllFeeds(): Promise<CrawledArticle[]> {
       if (isKnownError) {
         console.error(`Failed to crawl ${source.url}: ${e.message}`);
       } else {
-        console.error(`Failed to crawl ${source.url}:`, e);
+        const errorMsg = e.isAxiosError ? `${e.message}${e.cause?.message ? ` [${e.cause.message}]` : ''}` : (e.message || String(e));
+        console.error(`Failed to crawl ${source.url}: ${errorMsg}`);
       }
     }
   }

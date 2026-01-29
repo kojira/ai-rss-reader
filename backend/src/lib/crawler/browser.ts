@@ -59,7 +59,8 @@ export async function fetchFinalUrl(url: string, timeoutMs: number = 30000): Pro
       if (isKnownError) {
         console.error(`Browser fetch failed for ${url}: ${e.message}`);
       } else {
-        console.error(`Browser fetch failed for ${url}:`, e);
+        const errorMsg = e.isAxiosError ? `${e.message}${e.cause?.message ? ` [${e.cause.message}]` : ''}` : (e.message || String(e));
+        console.error(`Browser fetch failed for ${url}: ${errorMsg}`);
       }
       return url;
     }

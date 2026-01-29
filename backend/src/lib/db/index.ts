@@ -10,7 +10,12 @@ db.exec(`
     id INTEGER PRIMARY KEY CHECK (id = 1),
     open_router_api_key TEXT,
     discord_webhook_url TEXT,
-    score_threshold REAL DEFAULT 3.5
+    score_threshold REAL DEFAULT 3.5,
+    max_concurrent_per_domain INTEGER DEFAULT 2,
+    max_total_concurrent INTEGER DEFAULT 10,
+    domain_delay_ms INTEGER DEFAULT 1000,
+    feed_fetch_concurrency INTEGER DEFAULT 5,
+    eval_concurrency INTEGER DEFAULT 5
   );
 
   CREATE TABLE IF NOT EXISTS characters (
@@ -136,6 +141,21 @@ try {
     if (!statusColumns.some(c => c.name === 'worker_pid')) {
         db.exec("ALTER TABLE crawler_status ADD COLUMN worker_pid INTEGER");
     }
+
+    // Migration: Add concurrency config columns
+    const configColumns = db.prepare("PRAGMA table_info(configs)").all() as any[];
+    const concurrencyColumns = [
+        { name: 'max_concurrent_per_domain', type: 'INTEGER', default: 2 },
+        { name: 'max_total_concurrent', type: 'INTEGER', default: 10 },
+        { name: 'domain_delay_ms', type: 'INTEGER', default: 1000 },
+        { name: 'feed_fetch_concurrency', type: 'INTEGER', default: 5 },
+        { name: 'eval_concurrency', type: 'INTEGER', default: 5 },
+    ];
+    for (const col of concurrencyColumns) {
+        if (!configColumns.some((c: any) => c.name === col.name)) {
+            db.exec(`ALTER TABLE configs ADD COLUMN ${col.name} ${col.type} DEFAULT ${col.default}`);
+        }
+    }
 } catch (e) {}
 
 export default db;
@@ -145,6 +165,11 @@ export interface Config {
   open_router_api_key: string | null;
   discord_webhook_url: string | null;
   score_threshold: number;
+  max_concurrent_per_domain: number;
+  max_total_concurrent: number;
+  domain_delay_ms: number;
+  feed_fetch_concurrency: number;
+  eval_concurrency: number;
 }
 
 export interface Character {

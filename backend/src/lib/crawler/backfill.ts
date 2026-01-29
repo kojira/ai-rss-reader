@@ -34,7 +34,8 @@ export async function backfillImages() {
       if (isKnownError) {
         console.error(`Failed to backfill image for ${article.url}: ${e.message}`);
       } else {
-        console.error(`Failed to backfill image for ${article.url}:`, e);
+        const errorMsg = e.isAxiosError ? `${e.message}${e.cause?.message ? ` [${e.cause.message}]` : ''}` : (e.message || String(e));
+        console.error(`Failed to backfill image for ${article.url}: ${errorMsg}`);
       }
     }
   }

@@ -14,6 +14,26 @@ import { fetchFinalUrl, fetchWithBrowser } from './browser';
 const virtualConsole = new VirtualConsole();
 virtualConsole.on('error', () => {}); // エラーを無視
 
+/**
+ * Extract concise error message (avoids dumping huge axios error objects)
+ */
+export function formatError(e: any): string {
+  // Axios errors have a special structure
+  if (e.isAxiosError || e.config) {
+    const status = e.response?.status || '';
+    const statusText = e.response?.statusText || '';
+    const cause = e.cause?.message || e.cause?.code || '';
+    const msg = e.message || 'Unknown axios error';
+    return `${msg}${status ? ` (HTTP ${status} ${statusText})` : ''}${cause ? ` [${cause}]` : ''}`;
+  }
+  // Playwright errors
+  if (e.name === 'TimeoutError') {
+    return `Timeout: ${e.message}`;
+  }
+  // Default
+  return e.message || String(e);
+}
+
 function isGoogleNewsUrl(url: string): boolean {
   return url.includes('news.google.com') || url.includes('news.url.google.com') || url.includes('google.com/url');
 }
@@ -172,6 +192,109 @@ export async function processArticle(url: string) {
   }
 }
 
+/**
+ * Crawl article and save to DB (no LLM evaluation)
+ * Used by the parallel pipeline for Phase 2
+ */
+export async function crawlAndSaveArticle(
+  url: string,
+  metadata?: { resolvedUrl?: string; pubDate?: string; feedSource?: string }
+): Promise<{ url: string; success: boolean; hasContent: boolean }> {
+  try {
+    const processed = await processArticle(url);
+
+    DAO.saveArticle({
+      url: processed.url,
+      resolved_url: metadata?.resolvedUrl || processed.resolvedUrl,
+      original_title: processed.title,
+      content: processed.content,
+      image_url: processed.imageUrl,
+      published_at: metadata?.pubDate ? new Date(metadata.pubDate).toISOString() : null,
+    });
+
+    return {
+      url,
+      success: true,
+      hasContent: (processed.content?.length ?? 0) > 200
+    };
+  } catch (e: any) {
+    const isKnownError = e.message?.includes('Timeout') || e.name === 'TimeoutError' || e.message?.includes('blocked');
+    const errorMsg = formatError(e);
+    if (isKnownError) {
+      console.error(`Crawl failed for ${url}: ${e.message}`);
+    } else {
+      console.error(`Crawl failed for ${url}: ${errorMsg}`);
+    }
+    DAO.logError(url, errorMsg, null, '', 'CRAWL', 'Domain-aware crawl phase');
+    return { url, success: false, hasContent: false };
+  }
+}
+
+/**
+ * Evaluate existing article with LLM (assumes content already exists in DB)
+ * Used by the parallel pipeline for Phase 3
+ */
+export async function evaluateExistingArticle(url: string): Promise<boolean> {
+  try {
+    const article = DAO.getArticleByUrl(url);
+    if (!article || !article.content || article.content.length < 200) {
+      return false;
+    }
+
+    // Skip if already evaluated
+    if (article.average_score !== null) {
+      return true;
+    }
+
+    const crawledArticle: CrawledArticle = {
+      url: article.resolved_url || article.url,
+      originalUrl: article.url,
+      title: article.original_title || '',
+      content: article.content,
+      pubDate: article.published_at || new Date().toISOString(),
+      imageUrl: article.image_url || undefined,
+    };
+
+    const evaluation = await evaluateArticle(crawledArticle);
+    if (!evaluation) return false;
+
+    DAO.saveArticle({
+      url: article.url,
+      translated_title: evaluation.translatedTitle,
+      summary: evaluation.summary,
+      short_summary: evaluation.shortSummary,
+      score_novelty: evaluation.scores.novelty,
+      score_importance: evaluation.scores.importance,
+      score_reliability: evaluation.scores.reliability,
+      score_context_value: evaluation.scores.contextValue,
+      score_thought_provoking: evaluation.scores.thoughtProvoking,
+      average_score: evaluation.averageScore,
+    });
+
+    // Send Discord notification
+    await sendDiscordNotification(crawledArticle, evaluation).catch(e =>
+      console.error('Discord notification failed:', e.message)
+    );
+
+    DAO.clearError(url);
+    return true;
+  } catch (e: any) {
+    const isKnownError = e.message?.includes('Timeout') || e.name === 'TimeoutError';
+    const errorMsg = formatError(e);
+    if (isKnownError) {
+      console.error(`Evaluation failed for ${url}: ${e.message}`);
+    } else {
+      console.error(`Evaluation failed for ${url}: ${errorMsg}`);
+    }
+    DAO.logError(url, errorMsg, null, '', 'EVAL', 'Parallel evaluation phase');
+    return false;
+  }
+}
+
+/**
+ * Full article processing (crawl + evaluate) - for API endpoints
+ * @deprecated Use crawlAndSaveArticle + evaluateExistingArticle for worker pipeline
+ */
 export async function fullyProcessAndSaveArticle(url: string) {
   let currentPhase = 'CRAWL';
   let currentContext = 'Fetching and parsing article content';
