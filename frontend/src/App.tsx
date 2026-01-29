@@ -633,7 +633,7 @@ export default function App() {
                   <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
                     <Tabs value={selectedScriptIndex} onChange={(_, v) => setSelectedScriptIndex(v)} variant="scrollable" scrollButtons="auto">
                       {scripts.map((_, i) => (
-                        <Tab key={i} label={`Version ${i + 1}`} />
+                        <Tab key={i} label={`Version ${scripts.length - i}`} />
                       ))}
                     </Tabs>
                   </Box>
