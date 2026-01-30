@@ -36,6 +36,5 @@ export async function migrateGoogleUrls() {
   console.log('Migration complete.');
 }
 
-if (require.main === module) {
-  migrateGoogleUrls().catch(console.error);
-}
+// To run this migration manually:
+// npx ts-node -e "import { migrateGoogleUrls } from './src/lib/crawler/url-fix'; migrateGoogleUrls()"

@@ -1,10 +1,8 @@
 import Parser from 'rss-parser';
 import * as fs from 'fs';
 import { chromium } from 'playwright';
-import { fetchFinalUrl, closeBrowser } from './browser';
-import { processArticle } from './article';
+import { fetchFinalUrl } from './browser';
 import { DAO } from '../db/index';
-import { CrawledArticle } from '../types';
 import { QueuedArticle } from './domain-queue';
 
 const parser = new Parser();
@@ -182,77 +180,4 @@ export function toQueuedArticles(articles: CollectedArticle[]): QueuedArticle[] 
     feedSourceName: a.feedSourceName,
     title: a.title,
   }));
-}
-
-/**
- * @deprecated Use collectAllArticleUrls() with DomainQueueManager instead
- */
-export async function crawlAllFeeds(): Promise<CrawledArticle[]> {
-  const sources = DAO.getRssSources();
-  const allArticles: CrawledArticle[] = [];
-
-  for (const source of sources) {
-    console.log(`Crawling source: ${source.name} (${source.url})`);
-    try {
-      let feed;
-      if (source.url.startsWith('file://')) {
-        const filePath = source.url.replace('file://', '');
-        const xml = fs.readFileSync(filePath, 'utf-8');
-        feed = await parser.parseString(xml);
-      } else {
-        try {
-          console.log(`Attempting parseURL for ${source.url}`);
-          feed = await parser.parseURL(source.url);
-        } catch (e: any) {
-          console.log(`parseURL failed: ${e.message}. Falling back to fetchRssContentWithBrowser.`);
-          const xml = await fetchRssContentWithBrowser(source.url);
-          console.log(`Fetched XML (length: ${xml.length}): ${xml.slice(0, 50)}...`);
-          feed = await parser.parseString(xml);
-        }
-      }
-
-      const tasks = feed.items.map(async (item) => {
-        if (!item.link) return;
-
-        const existing = DAO.getArticleByUrl(item.link);
-        if (existing && existing.content && existing.content.length > 200) {
-          return;
-        }
-
-        try {
-          const resolvedUrl = await resolveUrl(item.link);
-          const processed = await processArticle(resolvedUrl);
-          
-          DAO.saveArticle({
-            url: item.link, 
-            original_title: processed.title,
-            content: processed.content,
-            image_url: processed.imageUrl || null,
-            published_at: item.pubDate ? new Date(item.pubDate).toISOString() : null,
-          });
-          return true;
-        } catch (e: any) {
-          console.error(`Error processing item ${item.link}:`, e.message);
-          DAO.logError(item.link, e.message, e.stack, item.title || 'Untitled');
-        }
-        return false;
-      });
-
-      // Simple concurrency limit of 4
-      for (let i = 0; i < tasks.length; i += 4) {
-        await Promise.all(tasks.slice(i, i + 4));
-      }
-    } catch (e: any) {
-      const isKnownError = e.message?.includes('Timeout') || e.name === 'TimeoutError';
-      if (isKnownError) {
-        console.error(`Failed to crawl ${source.url}: ${e.message}`);
-      } else {
-        const errorMsg = e.isAxiosError ? `${e.message}${e.cause?.message ? ` [${e.cause.message}]` : ''}` : (e.message || String(e));
-        console.error(`Failed to crawl ${source.url}: ${errorMsg}`);
-      }
-    }
-  }
-
-  await closeBrowser();
-  return allArticles;
 }

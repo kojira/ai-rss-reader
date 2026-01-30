@@ -12,6 +12,24 @@ const port = process.env.PORT ? parseInt(process.env.PORT) : 3005;
 
 let currentWorker: any = null;
 
+// Input validation helpers
+function isValidUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function isValidString(value: unknown, maxLength = 10000): value is string {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= maxLength;
+}
+
+function isValidRole(role: unknown): role is 'expert' | 'learner' {
+  return role === 'expert' || role === 'learner';
+}
+
 app.use(cors());
 app.use(express.json());
 
@@ -29,7 +47,7 @@ app.get('/api/articles/errors', (req, res) => {
 
 app.post('/api/articles/ingest', async (req, res) => {
   const { url } = req.body;
-  if (!url) return res.status(400).json({ message: 'URL is required' });
+  if (!url || !isValidUrl(url)) return res.status(400).json({ message: 'Valid URL is required' });
   try {
     const existing = DAO.getArticleByUrl(url);
     if (existing && existing.average_score !== null) {
@@ -75,11 +93,19 @@ app.post('/api/config', (req, res) => { DAO.updateConfig(req.body); res.json({ m
 
 app.get('/api/characters', (req, res) => res.json(DAO.getCharacters()));
 app.post('/api/characters', (req, res) => {
-  DAO.addCharacter(req.body.name, req.body.persona, req.body.avatar, req.body.role);
+  const { name, persona, avatar, role } = req.body;
+  if (!isValidString(name, 100)) return res.status(400).json({ message: 'Valid name is required (max 100 chars)' });
+  if (!isValidString(persona, 1000)) return res.status(400).json({ message: 'Valid persona is required (max 1000 chars)' });
+  if (!isValidRole(role)) return res.status(400).json({ message: 'Role must be "expert" or "learner"' });
+  DAO.addCharacter(name, persona, avatar || null, role);
   res.json({ message: 'Added' });
 });
 app.put('/api/characters/:id', (req, res) => {
-  DAO.updateCharacter(parseInt(req.params.id), req.body.name, req.body.persona, req.body.avatar, req.body.role);
+  const { name, persona, avatar, role } = req.body;
+  if (!isValidString(name, 100)) return res.status(400).json({ message: 'Valid name is required (max 100 chars)' });
+  if (!isValidString(persona, 1000)) return res.status(400).json({ message: 'Valid persona is required (max 1000 chars)' });
+  if (!isValidRole(role)) return res.status(400).json({ message: 'Role must be "expert" or "learner"' });
+  DAO.updateCharacter(parseInt(req.params.id), name, persona, avatar || null, role);
   res.json({ message: 'Updated' });
 });
 app.delete('/api/characters/:id', (req, res) => {
@@ -190,7 +216,13 @@ Output Format (MUST be a valid JSON array of objects):
 });
 
 app.get('/api/sources', (req, res) => res.json(DAO.getRssSources()));
-app.post('/api/sources', (req, res) => { DAO.addRssSource(req.body.url, req.body.name); res.json({ message: 'Added' }); });
+app.post('/api/sources', (req, res) => {
+  const { url, name } = req.body;
+  if (!url || !isValidUrl(url)) return res.status(400).json({ message: 'Valid URL is required' });
+  if (!isValidString(name, 200)) return res.status(400).json({ message: 'Valid name is required (max 200 chars)' });
+  DAO.addRssSource(url, name);
+  res.json({ message: 'Added' });
+});
 app.delete('/api/sources/:id', (req, res) => { DAO.deleteRssSource(parseInt(req.params.id)); res.json({ message: 'Deleted' }); });
 
 app.get('/api/status', (req, res) => {
@@ -253,7 +285,7 @@ app.delete('/api/crawl', (req, res) => {
       console.log(`Killing worker PID group: ${status.worker_pid}`);
       process.kill(-status.worker_pid, 'SIGKILL');
     } catch (e) {
-      try { process.kill(status.worker_pid, 'SIGKILL'); } catch (e2) {}
+      try { process.kill(status.worker_pid, 'SIGKILL'); } catch { /* Process may not exist */ }
     }
   }
   DAO.resetCrawlerStatus('Stopped by user');
@@ -355,7 +387,7 @@ const gracefulShutdown = () => {
   if (status.worker_pid) {
     console.log(`Killing worker PID: ${status.worker_pid}`);
     try { process.kill(-status.worker_pid, 'SIGTERM'); } catch (e) {
-      try { process.kill(status.worker_pid, 'SIGTERM'); } catch (e2) {}
+      try { process.kill(status.worker_pid, 'SIGTERM'); } catch { /* Process may not exist */ }
     }
   }
   server.close(() => {

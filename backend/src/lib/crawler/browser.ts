@@ -9,7 +9,7 @@ async function getBrowser(): Promise<Browser> {
     if (browserInstance) {
       try {
         await browserInstance.close();
-      } catch {}
+      } catch { /* Browser may already be closed */ }
     }
     browserInstance = await chromium.launch({
       headless: true,
@@ -121,7 +121,7 @@ export async function fetchWithBrowser(url: string, timeoutMs: number = 45000): 
             await page.waitForTimeout(1000);
             break;
           }
-        } catch {}
+        } catch { /* Cookie consent button may not exist */ }
       }
 
       // ページをスクロールしてlazyコンテンツをロード

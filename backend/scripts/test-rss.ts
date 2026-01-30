@@ -1,4 +1,4 @@
-import { DAO } from './lib/db/index';
+import { DAO } from '../src/lib/db/index';
 
 async function testRssCrawl() {
     console.log('--- Testing RSS Crawl ---');

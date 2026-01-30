@@ -103,7 +103,7 @@ db.exec(`
 
 // Migration
 try {
-    const columns = db.prepare("PRAGMA table_info(articles)").all() as any[];
+    const columns = db.prepare("PRAGMA table_info(articles)").all() as PragmaColumnInfo[];
     const required = [
         'resolved_url',
         'domain',
@@ -122,28 +122,28 @@ try {
     }
 
     // Backfill domain for existing articles
-    const articlesWithoutDomain = db.prepare('SELECT id, url, resolved_url FROM articles WHERE domain IS NULL').all() as any[];
+    const articlesWithoutDomain = db.prepare('SELECT id, url, resolved_url FROM articles WHERE domain IS NULL').all() as Pick<Article, 'id' | 'url' | 'resolved_url'>[];
     for (const article of articlesWithoutDomain) {
         const urlToCheck = article.resolved_url || article.url;
         try {
             const domain = new URL(urlToCheck).hostname;
             db.prepare('UPDATE articles SET domain = ? WHERE id = ?').run(domain, article.id);
-        } catch {}
+        } catch { /* Invalid URL, skip domain extraction */ }
     }
-    const errorColumns = db.prepare("PRAGMA table_info(article_errors)").all() as any[];
+    const errorColumns = db.prepare("PRAGMA table_info(article_errors)").all() as PragmaColumnInfo[];
     if (!errorColumns.some(c => c.name === 'phase')) {
         db.exec("ALTER TABLE article_errors ADD COLUMN phase TEXT");
     }
     if (!errorColumns.some(c => c.name === 'context')) {
         db.exec("ALTER TABLE article_errors ADD COLUMN context TEXT");
     }
-    const statusColumns = db.prepare("PRAGMA table_info(crawler_status)").all() as any[];
+    const statusColumns = db.prepare("PRAGMA table_info(crawler_status)").all() as PragmaColumnInfo[];
     if (!statusColumns.some(c => c.name === 'worker_pid')) {
         db.exec("ALTER TABLE crawler_status ADD COLUMN worker_pid INTEGER");
     }
 
     // Migration: Add concurrency config columns
-    const configColumns = db.prepare("PRAGMA table_info(configs)").all() as any[];
+    const configColumns = db.prepare("PRAGMA table_info(configs)").all() as PragmaColumnInfo[];
     const concurrencyColumns = [
         { name: 'max_concurrent_per_domain', type: 'INTEGER', default: 2 },
         { name: 'max_total_concurrent', type: 'INTEGER', default: 10 },
@@ -152,11 +152,13 @@ try {
         { name: 'eval_concurrency', type: 'INTEGER', default: 5 },
     ];
     for (const col of concurrencyColumns) {
-        if (!configColumns.some((c: any) => c.name === col.name)) {
+        if (!configColumns.some((c: PragmaColumnInfo) => c.name === col.name)) {
             db.exec(`ALTER TABLE configs ADD COLUMN ${col.name} ${col.type} DEFAULT ${col.default}`);
         }
     }
-} catch (e) {}
+} catch (e) {
+    console.error('Database migration error:', e);
+}
 
 export default db;
 
@@ -213,11 +215,60 @@ export interface ArticleError {
   created_at: string;
 }
 
+export interface CrawlerStatus {
+  id: number;
+  is_crawling: number;
+  last_run: string | null;
+  current_task: string | null;
+  articles_processed: number;
+  last_error: string | null;
+  worker_pid: number | null;
+}
+
+export interface RssSource {
+  id: number;
+  url: string;
+  name: string;
+}
+
+export interface BlockedDomain {
+  id: number;
+  domain: string;
+  reason: string;
+  created_at: string;
+}
+
+export interface Script {
+  id: number;
+  article_id: number;
+  content_json: string;
+  char_a_id: number;
+  char_b_id: number;
+  created_at: string;
+}
+
+export interface ScriptWithCharacters extends Script {
+  char_a_name: string;
+  char_a_avatar: string | null;
+  char_b_name: string;
+  char_b_avatar: string | null;
+}
+
+// For SQLite PRAGMA table_info
+interface PragmaColumnInfo {
+  cid: number;
+  name: string;
+  type: string;
+  notnull: number;
+  dflt_value: string | null;
+  pk: number;
+}
+
 export class DAO {
-  static getCrawlerStatus() {
-    return db.prepare('SELECT * FROM crawler_status WHERE id = 1').get() as any;
+  static getCrawlerStatus(): CrawlerStatus {
+    return db.prepare('SELECT * FROM crawler_status WHERE id = 1').get() as CrawlerStatus;
   }
-  static updateCrawlerStatus(status: any) {
+  static updateCrawlerStatus(status: Partial<CrawlerStatus>) {
     const current = this.getCrawlerStatus() || { 
       is_crawling: 0, 
       last_run: null, 
@@ -280,7 +331,7 @@ export class DAO {
       if (urlToCheck) {
         try {
           article.domain = new URL(urlToCheck).hostname;
-        } catch {}
+        } catch { /* Invalid URL, skip domain extraction */ }
       }
     }
 
@@ -303,8 +354,8 @@ export class DAO {
   static clearError(url: string) {
     db.prepare('DELETE FROM article_errors WHERE url = ?').run(url);
   }
-  static getRssSources() {
-    return db.prepare('SELECT * FROM rss_sources').all() as any[];
+  static getRssSources(): RssSource[] {
+    return db.prepare('SELECT * FROM rss_sources').all() as RssSource[];
   }
   static addRssSource(url: string, name: string) {
     return db.prepare('INSERT INTO rss_sources (url, name) VALUES (?, ?)').run(url, name);
@@ -324,8 +375,8 @@ export class DAO {
   static deleteCharacter(id: number) {
     return db.prepare('DELETE FROM characters WHERE id=?').run(id);
   }
-  static getScriptsForArticle(id: number): any[] {
-    return db.prepare('SELECT s.*, ca.name as char_a_name, ca.avatar as char_a_avatar, cb.name as char_b_name, cb.avatar as char_b_avatar FROM scripts s LEFT JOIN characters ca ON s.char_a_id = ca.id LEFT JOIN characters cb ON s.char_b_id = cb.id WHERE article_id = ? ORDER BY created_at DESC').all(id);
+  static getScriptsForArticle(id: number): ScriptWithCharacters[] {
+    return db.prepare('SELECT s.*, ca.name as char_a_name, ca.avatar as char_a_avatar, cb.name as char_b_name, cb.avatar as char_b_avatar FROM scripts s LEFT JOIN characters ca ON s.char_a_id = ca.id LEFT JOIN characters cb ON s.char_b_id = cb.id WHERE article_id = ? ORDER BY created_at DESC').all(id) as ScriptWithCharacters[];
   }
   static addScript(aid: number, json: string, caid: number, cbid: number) {
     return db.prepare('INSERT INTO scripts (article_id, content_json, char_a_id, char_b_id) VALUES (?, ?, ?, ?)').run(aid, json, caid, cbid);
@@ -348,8 +399,8 @@ export class DAO {
   }
 
   // ブロックリスト関連
-  static getBlockedDomains(): { id: number; domain: string; reason: string; created_at: string }[] {
-    return db.prepare('SELECT * FROM blocked_domains ORDER BY created_at DESC').all() as any[];
+  static getBlockedDomains(): BlockedDomain[] {
+    return db.prepare('SELECT * FROM blocked_domains ORDER BY created_at DESC').all() as BlockedDomain[];
   }
   static isBlockedDomain(domain: string): boolean {
     const result = db.prepare('SELECT 1 FROM blocked_domains WHERE domain = ?').get(domain);
