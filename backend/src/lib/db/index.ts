@@ -51,6 +51,7 @@ db.exec(`
     score_context_value REAL,
     score_thought_provoking REAL,
     published_at DATETIME,
+    rss_item_json TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -112,11 +113,12 @@ try {
         'score_reliability',
         'score_context_value',
         'score_thought_provoking',
-        'published_at'
+        'published_at',
+        'rss_item_json'
     ];
     for (const col of required) {
         if (!columns.some(c => c.name === col)) {
-            const type = (col === 'resolved_url' || col === 'published_at' || col === 'domain') ? 'TEXT' : 'REAL';
+            const type = (col === 'resolved_url' || col === 'published_at' || col === 'domain' || col === 'rss_item_json') ? 'TEXT' : 'REAL';
             db.exec(`ALTER TABLE articles ADD COLUMN ${col} ${type}`);
         }
     }
@@ -201,6 +203,7 @@ export interface Article {
   score_context_value: number | null;
   score_thought_provoking: number | null;
   published_at: string | null;
+  rss_item_json: string | null;
   created_at: string;
 }
 

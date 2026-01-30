@@ -14,6 +14,7 @@ export interface QueuedArticle {
   pubDate?: string;
   feedSourceName: string;
   title?: string;
+  rssItemJson?: string;  // Raw RSS item for future analysis
 }
 
 export interface DomainQueueConfig {

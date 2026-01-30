@@ -198,7 +198,7 @@ export async function processArticle(url: string) {
  */
 export async function crawlAndSaveArticle(
   url: string,
-  metadata?: { resolvedUrl?: string; pubDate?: string; feedSource?: string }
+  metadata?: { resolvedUrl?: string; pubDate?: string; feedSource?: string; rssItemJson?: string }
 ): Promise<{ url: string; success: boolean; hasContent: boolean }> {
   try {
     const processed = await processArticle(url);
@@ -209,7 +209,8 @@ export async function crawlAndSaveArticle(
       original_title: processed.title,
       content: processed.content,
       image_url: processed.imageUrl,
-      published_at: metadata?.pubDate ? new Date(metadata.pubDate).toISOString() : null,
+      published_at: metadata?.pubDate && metadata.pubDate.trim() !== '' ? new Date(metadata.pubDate).toISOString() : null,
+      rss_item_json: metadata?.rssItemJson || null,
     });
 
     return {

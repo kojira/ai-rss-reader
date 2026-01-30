@@ -14,6 +14,7 @@ export interface CollectedArticle {
   feedSourceName: string;
   feedSourceId: number;
   title?: string;
+  rssItemJson?: string;  // Raw RSS item for future analysis
 }
 
 export function isGoogleNewsUrl(url: string): boolean {
@@ -85,8 +86,17 @@ async function collectFeedUrls(source: { id: number; url: string; name: string }
     const resolvePromises = feed.items
       .filter(item => item.link)
       .map(async (item) => {
-        // Skip if already fully processed
         const existing = DAO.getArticleByUrl(item.link!);
+
+        // Update published_at for existing articles if missing
+        if (existing && !existing.published_at && item.pubDate) {
+          DAO.saveArticle({
+            url: item.link!,
+            published_at: new Date(item.pubDate).toISOString(),
+          });
+        }
+
+        // Skip if already fully processed
         if (existing?.content && existing.content.length > 200 && existing.average_score !== null) {
           return null;
         }
@@ -100,6 +110,7 @@ async function collectFeedUrls(source: { id: number; url: string; name: string }
             feedSourceName: source.name,
             feedSourceId: source.id,
             title: item.title,
+            rssItemJson: JSON.stringify(item),
           };
         } catch (e: any) {
           console.error(`Failed to resolve URL ${item.link}:`, e.message);
@@ -179,5 +190,6 @@ export function toQueuedArticles(articles: CollectedArticle[]): QueuedArticle[] 
     pubDate: a.pubDate,
     feedSourceName: a.feedSourceName,
     title: a.title,
+    rssItemJson: a.rssItemJson,
   }));
 }

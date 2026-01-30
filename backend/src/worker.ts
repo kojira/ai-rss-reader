@@ -90,6 +90,7 @@ async function main() {
             resolvedUrl: article.resolvedUrl,
             pubDate: article.pubDate,
             feedSource: article.feedSourceName,
+            rssItemJson: article.rssItemJson,
           });
         }
       );
