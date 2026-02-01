@@ -306,7 +306,11 @@ export class DAO {
     db.prepare(`UPDATE configs SET open_router_api_key = ?, discord_webhook_url = ?, score_threshold = ? WHERE id = 1`).run(updated.open_router_api_key, updated.discord_webhook_url, updated.score_threshold);
   }
   static getArticles(limit = 20, offset = 0, keyword = '', minScore = 0): Article[] {
-    let sql = 'SELECT * FROM articles WHERE (domain IS NULL OR domain NOT IN (SELECT domain FROM blocked_domains))';
+    // Filter out incomplete articles (no title or no content)
+    let sql = `SELECT * FROM articles WHERE
+      (domain IS NULL OR domain NOT IN (SELECT domain FROM blocked_domains))
+      AND original_title IS NOT NULL AND original_title != ''
+      AND content IS NOT NULL AND length(content) > 100`;
     const params: any[] = [];
     if (keyword) {
       sql += ' AND (original_title LIKE ? OR translated_title LIKE ? OR summary LIKE ?)';
