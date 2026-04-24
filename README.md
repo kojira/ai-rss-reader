@@ -86,7 +86,3 @@ pnpm worker
 - **Crawler**: Cheerio, RSS-Parser
 - **AI**: Gemini 2.0 via OpenRouter
 - **Notification**: Discord Webhook
-
-## 開発状況
-
-このプロジェクトは現在活発に開発中です。
